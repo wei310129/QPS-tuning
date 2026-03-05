@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: QPS-tuning
+#  threads:
+#    virtual:
+#      enabled: true
+
+redisson:
+  singleServerConfig:
+    address: ${REDIS_ADDRESS:redis://127.0.0.1:6379}
