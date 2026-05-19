@@ -9,11 +9,13 @@ import org.redisson.api.RRateLimiter;
 import org.redisson.api.RateIntervalUnit;
 import org.redisson.api.RateType;
 import org.redisson.api.RedissonClient;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
+@Order(10)
 @Slf4j
 @Component
 public class OrderRateLimitFilter extends OncePerRequestFilter {
@@ -26,7 +28,7 @@ public class OrderRateLimitFilter extends OncePerRequestFilter {
 
         // 設定：每 1 秒最多 100 次
         // RateType.OVERALL = 全體共享配額（你要的 global limit）
-        this.limiter.setRate(RateType.OVERALL, 150, 1, RateIntervalUnit.SECONDS);
+        this.limiter.setRate(RateType.OVERALL, 100, 1, RateIntervalUnit.SECONDS);
     }
 
     @Override

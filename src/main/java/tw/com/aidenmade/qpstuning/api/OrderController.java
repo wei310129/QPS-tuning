@@ -16,7 +16,8 @@ public class OrderController {
     @GetMapping
     public String createOrder() throws InterruptedException {
         log.info("Create order {}", counter.incrementAndGet());
-        Thread.sleep(1000L);
+//        Thread.sleep(1000L);
+        Thread.sleep(500L);
         return "Create order";
     }
 }
