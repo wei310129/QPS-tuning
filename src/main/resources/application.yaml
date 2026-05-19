@@ -6,5 +6,7 @@ spring:
 #      enabled: true
 
 redisson:
-  singleServerConfig:
-    address: ${REDIS_ADDRESS:redis://127.0.0.1:6379}
+  sentinelServersConfig:
+    masterName: ${REDIS_MASTER_NAME:mymaster}
+    sentinelAddresses:
+      - ${REDIS_SENTINEL_ADDRESS:redis://127.0.0.1:26379}

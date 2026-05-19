@@ -66,8 +66,8 @@ The application starts on the default Spring Boot port (8080) and connects to Re
 # Build OCI image
 ./mvnw spring-boot:build-image
 
-# Override Redis address for container networking
-docker run -e REDIS_ADDRESS=redis://redis:6379 <image-name>
+# Override Redis sentinel address for container/k8s networking
+docker run -e REDIS_SENTINEL_ADDRESS=redis://mps-redis-sentinel-service:26379 <image-name>
 ```
 
 ### Testing
@@ -128,7 +128,7 @@ src/main/resources/
 
 ### application.yaml
 - Spring application name: `QPS-tuning`
-- Redisson single server config: connects to Redis via `REDIS_ADDRESS` env var or defaults to `redis://127.0.0.1:6379`
+- Redisson sentinel config: connects to Redis Sentinel via `REDIS_SENTINEL_ADDRESS` env var (default `redis://127.0.0.1:26379`) and `REDIS_MASTER_NAME` env var (default `mymaster`)
 - Virtual threads are commented out (can be enabled with `spring.threads.virtual.enabled: true`)
 
 ### Filter Order
