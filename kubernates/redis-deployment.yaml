@@ -1,0 +1,228 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mps-redis-node-0
+  namespace: front-mpos
+  labels:
+    app: mps-redis-node-0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mps-redis-node-0
+  template:
+    metadata:
+      labels:
+        app: mps-redis-node-0
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cat > /home/redis/redis.conf <<EOF
+              bind 0.0.0.0
+              port 6379
+              dir /home/redis/data
+              appendonly yes
+              protected-mode no
+              EOF
+
+              redis-server /home/redis/redis.conf
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /home/redis/data
+            - name: config
+              mountPath: /home/redis
+          resources:
+            requests:
+              cpu: "0.1"
+              memory: "128Mi"
+            limits:
+              cpu: "2"
+              memory: "12Gi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mps-redis-node-1
+  namespace: front-mpos
+  labels:
+    app: mps-redis-node-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mps-redis-node-1
+  template:
+    metadata:
+      labels:
+        app: mps-redis-node-1
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cat > /home/redis/redis.conf <<EOF
+              bind 0.0.0.0
+              port 6379
+              dir /home/redis/data
+              appendonly yes
+              protected-mode no
+              replicaof mps-redis-node-0-service 6379
+              EOF
+
+              redis-server /home/redis/redis.conf
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /home/redis/data
+            - name: config
+              mountPath: /home/redis
+          resources:
+            requests:
+              cpu: "0.1"
+              memory: "128Mi"
+            limits:
+              cpu: "2"
+              memory: "12Gi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mps-redis-node-2
+  namespace: front-mpos
+  labels:
+    app: mps-redis-node-2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mps-redis-node-2
+  template:
+    metadata:
+      labels:
+        app: mps-redis-node-2
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cat > /home/redis/redis.conf <<EOF
+              bind 0.0.0.0
+              port 6379
+              dir /home/redis/data
+              appendonly yes
+              protected-mode no
+              replicaof mps-redis-node-0-service 6379
+              EOF
+
+              redis-server /home/redis/redis.conf
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /home/redis/data
+            - name: config
+              mountPath: /home/redis
+          resources:
+            requests:
+              cpu: "0.1"
+              memory: "128Mi"
+            limits:
+              cpu: "2"
+              memory: "12Gi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mps-redis-sentinel
+  namespace: front-mpos
+  labels:
+    app: mps-redis-sentinel
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mps-redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: mps-redis-sentinel
+    spec:
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cat > /home/redis/sentinel.conf <<EOF
+              port 26379
+              bind 0.0.0.0
+              protected-mode no
+              dir /home/redis/data
+              sentinel resolve-hostnames yes
+              sentinel announce-hostnames yes
+              sentinel monitor mymaster mps-redis-node-0-service 6379 2
+              sentinel down-after-milliseconds mymaster 5000
+              sentinel failover-timeout mymaster 30000
+              sentinel parallel-syncs mymaster 1
+              EOF
+
+              redis-sentinel /home/redis/sentinel.conf
+          ports:
+            - containerPort: 26379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /home/redis/data
+            - name: config
+              mountPath: /home/redis
+          resources:
+            requests:
+              cpu: "0.1"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
