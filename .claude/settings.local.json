@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d D:\\\\my-project\\\\QPS-tuning)",
+      "Bash(Get-ChildItem -Force)",
+      "Bash(git *)"
+    ]
+  }
+}
