@@ -22,6 +22,11 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
   - `/gc/cache` (POST): Medium-lived objects stored in a ConcurrentHashMap with TTL
   - `/gc/cache/cleanup` (DELETE): Manual cleanup of expired cache entries
   - `/gc/big`: Large allocation test (humongous objects)
+- `RedisLoadController` (`/redis/*`): Redis performance benchmark endpoints using Redisson primitives:
+  - `/redis/ping`: Single SET/GET latency check
+  - `/redis/write` and `/redis/read`: Sequential write/read throughput
+  - `/redis/batch` and `/redis/batch-max`: Pipelined batch write throughput
+  - `/redis/mixed`: Concurrent mixed read/write load test
 
 ### Technology Stack
 - **Framework**: Spring Boot 3.3.3 with Undertow (not Tomcat) as servlet container
@@ -33,7 +38,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ### Infrastructure
 - **Local Development**: Docker Compose with Redis 7 Alpine in `/docker/docker-compose.redis.yaml`
 - **Kubernetes Deployment**: Redis cluster with sentinel support in `/kubernates/` (3 nodes + 3 sentinels) targeting `front-mpos` namespace
-- **Configuration**: Redis address configured via `REDIS_ADDRESS` environment variable (defaults to `redis://127.0.0.1:6379`)
+- **Configuration**: Redis mode is controlled by `REDIS_MODE` (`single` by default); use `REDIS_ADDRESS` for single-server mode, or `REDIS_MASTER_NAME` + `REDIS_SENTINEL_ADDRESSES`/`REDIS_SENTINEL_ADDRESS` for sentinel mode
 
 ## Building and Running
 
@@ -67,7 +72,7 @@ The application starts on the default Spring Boot port (8080) and connects to Re
 ./mvnw spring-boot:build-image
 
 # Override Redis sentinel address for container/k8s networking
-docker run -e REDIS_SENTINEL_ADDRESS=redis://mps-redis-sentinel-service:26379 <image-name>
+docker run -e REDIS_MODE=sentinel -e REDIS_SENTINEL_ADDRESSES=redis://mps-redis-sentinel-service:26379 <image-name>
 ```
 
 ### Testing
@@ -107,6 +112,22 @@ curl -X DELETE "http://localhost:8080/gc/cache/cleanup"
 curl "http://localhost:8080/gc/big?mb=4&repeat=3"
 ```
 
+### Redis Load Testing
+```bash
+# Basic Redis RTT check
+curl "http://localhost:8080/redis/ping"
+
+# Sequential write/read throughput
+curl "http://localhost:8080/redis/write?keys=2000&valueBytes=512"
+curl "http://localhost:8080/redis/read?keys=2000&valueBytes=512"
+
+# Batch pipeline throughput
+curl "http://localhost:8080/redis/batch?keys=5000&valueBytes=256"
+
+# Concurrent mixed read/write pressure
+curl "http://localhost:8080/redis/mixed?ops=20000&readRatio=70&threads=50"
+```
+
 ## Code Organization
 
 ```
@@ -115,7 +136,10 @@ src/main/java/tw/com/aidenmade/qpstuning/
 ├── api/
 │   ├── OrderController.java           # Order endpoint with rate/concurrency limits
 │   ├── TuningController.java          # Testing endpoint
-│   └── GcLoadController.java          # GC pressure simulation
+│   ├── GcLoadController.java          # GC pressure simulation
+│   └── RedisLoadController.java       # Redis latency/throughput benchmark endpoints
+├── config/
+│   └── RedissonConfig.java            # Redisson client setup for single/sentinel modes
 └── filter/
     ├── OrderRateLimitFilter.java      # Global rate limiter (RRateLimiter)
     └── OrderConcurrencyLimitFilter.java # Global concurrency limiter (RSemaphore)
@@ -128,7 +152,9 @@ src/main/resources/
 
 ### application.yaml
 - Spring application name: `QPS-tuning`
-- Redisson sentinel config: connects to Redis Sentinel via `REDIS_SENTINEL_ADDRESS` env var (default `redis://127.0.0.1:26379`) and `REDIS_MASTER_NAME` env var (default `mymaster`)
+- Redisson config supports two modes via `app.redis.mode` / `REDIS_MODE`:
+  - `single` (default): uses `REDIS_ADDRESS` (default `redis://127.0.0.1:6379`)
+  - `sentinel`: uses `REDIS_MASTER_NAME` (default `mymaster`) and `REDIS_SENTINEL_ADDRESSES` (comma-separated; falls back to `REDIS_SENTINEL_ADDRESS`)
 - Virtual threads are commented out (can be enabled with `spring.threads.virtual.enabled: true`)
 
 ### Filter Order
@@ -146,7 +172,7 @@ Add a method to `GcLoadController` with query parameters for tuning. Validate pa
 - Concurrency limit: Change `semaphore.trySetPermits(...)` in `OrderConcurrencyLimitFilter` constructor
 
 ### Kubernetes Deployment
-Deploy using the YAML files in `/kubernates/`. The namespace `front-mpos` must exist. Redis services use cluster mode with sentinel for failover. Update `REDIS_ADDRESS` environment variable in your deployment manifest to point to the sentinel service.
+Deploy using the YAML files in `/kubernates/`. The namespace `front-mpos` must exist. Redis services use cluster mode with sentinel for failover. In app deployment manifests, set `REDIS_MODE=sentinel` and point `REDIS_SENTINEL_ADDRESSES` (or `REDIS_SENTINEL_ADDRESS`) to the sentinel service.
 
 ## Key Dependencies
 - spring-boot-starter-web (Undertow)
