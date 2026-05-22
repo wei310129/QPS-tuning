@@ -1,13 +1,13 @@
 # ─────────────────────────────────────────────
-# Redis StatefulSet (3 nodes: node-0 = initial master, node-1/2 = replicas)
+# Redis StatefulSet（3 節點：node-0 為初始 master，node-1/2 為 replica）
 #
-# Each pod announces itself via a stable headless-DNS hostname so that
-# Sentinel NEVER stores raw pod IPs — fixes the "stale IP" accumulation
-# problem that occurs when Deployments restart with new IPs after failover.
+# 每個 Pod 會用穩定的 headless DNS 主機名宣告自己，讓
+# Sentinel 不會記錄原始 Pod IP，避免 failover 後重建造成
+# 舊 IP 持續累積的問題。
 #
-# On every (re)start the pod first queries Sentinel to discover who is
-# the current master.  This prevents split-brain when node-0 is deleted
-# and recreated after Sentinel has already promoted node-1 or node-2.
+# 每次（重）啟時，Pod 會先詢問 Sentinel 目前 master 是誰。
+# 這可避免在 node-0 被刪除並重建時，Sentinel 已提升 node-1
+# 或 node-2 卻發生 split-brain。
 # ─────────────────────────────────────────────
 apiVersion: apps/v1
 kind: StatefulSet
@@ -17,7 +17,7 @@ metadata:
   labels:
     app: mps-redis
 spec:
-  serviceName: mps-redis-headless   # must match the headless Service name
+  serviceName: mps-redis-headless   # 必須與 headless Service 名稱一致
   replicas: 3
   selector:
     matchLabels:
@@ -38,7 +38,7 @@ spec:
               INDEX=${HOSTNAME##*-}
               ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-headless.front-mpos.svc.cluster.local"
 
-              # Write base config (no replicaof yet)
+              # 先寫入基礎設定（暫不帶 replicaof）
               cat > /home/redis/redis.conf << 'EOF'
               bind 0.0.0.0
               port 6379
@@ -49,14 +49,14 @@ spec:
               maxmemory-policy noeviction
               EOF
 
-              # Append dynamic fields that need shell variable expansion
+              # 追加需由 shell 變數展開的欄位
               echo "replica-announce-ip  ${ANNOUNCE_HOSTNAME}" >> /home/redis/redis.conf
               echo "replica-announce-port 6379"                 >> /home/redis/redis.conf
 
-              # ── Determine role ────────────────────────────────────────────
-              # Query every Sentinel to find who the current master is.
-              # If Sentinel is not yet available (first-boot bootstrap) fall
-              # back to the static INDEX-based rule.
+              # ── 判斷角色 ─────────────────────────────────────────────────
+              # 輪詢每個 Sentinel，查出目前 master。
+              # 若 Sentinel 尚未可用（首次啟動 bootstrap），
+              # 則退回使用固定 INDEX 規則。
               SENTINEL_HEADLESS="mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
               MASTER_HOST=""
 
@@ -64,30 +64,30 @@ spec:
                 SENTINEL="mps-redis-sentinel-${i}.${SENTINEL_HEADLESS}"
                 CANDIDATE=$(redis-cli -h "$SENTINEL" -p 26379 --no-auth-warning \
                   SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -1)
-                # head -1 returns the hostname line; guard against empty/error output
+                # head -1 會回傳主機名那一行；需防呆空值或錯誤輸出
                 if echo "$CANDIDATE" | grep -q "\."; then
                   MASTER_HOST="$CANDIDATE"
-                  echo "[init] Sentinel ${SENTINEL} reports master: ${MASTER_HOST}"
+                  echo "[init] Sentinel ${SENTINEL} 回報 master: ${MASTER_HOST}"
                   break
                 fi
               done
 
               if [ -n "$MASTER_HOST" ]; then
                 if [ "$MASTER_HOST" = "$ANNOUNCE_HOSTNAME" ]; then
-                  echo "[init] We ARE the sentinel-elected master — starting without replicaof"
-                  # no replicaof line needed
+                  echo "[init] 目前節點就是 Sentinel 選出的 master，無需 replicaof"
+                  # 不需要 replicaof
                 else
-                  echo "[init] Starting as replica of sentinel-elected master: ${MASTER_HOST}"
+                  echo "[init] 以 Sentinel 選出的 master 為上游啟動 replica: ${MASTER_HOST}"
                   echo "replicaof ${MASTER_HOST} 6379" >> /home/redis/redis.conf
                 fi
               else
-                # Sentinel not reachable yet (bootstrap / cold start)
+                # Sentinel 尚不可達（bootstrap / 冷啟動）
                 if [ "$INDEX" != "0" ]; then
-                  echo "[init] Bootstrap mode (no sentinel): starting as replica of node-0"
+                  echo "[init] Bootstrap 模式（無 sentinel）：以 node-0 為上游啟動 replica"
                   echo "replicaof mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local 6379" \
                     >> /home/redis/redis.conf
                 else
-                  echo "[init] Bootstrap mode (no sentinel): INDEX=0 — starting as master"
+                  echo "[init] Bootstrap 模式（無 sentinel）：INDEX=0，以 master 啟動"
                 fi
               fi
               # ─────────────────────────────────────────────────────────────
@@ -117,15 +117,14 @@ spec:
 
 ---
 # ─────────────────────────────────────────────
-# Redis Sentinel StatefulSet (3 replicas)
+# Redis Sentinel StatefulSet（3 個 replica）
 #
-# Each sentinel announces its own stable headless-DNS hostname so that
-# sentinels discover each other by name, not by IP.
+# 每個 Sentinel 會宣告自己的穩定 headless DNS 主機名，
+# 讓 Sentinel 彼此以名稱發現，而非使用 IP。
 #
-# On every (re)start the sentinel probes all Redis nodes to discover who
-# is currently the master, instead of always hardcoding node-0.
-# This prevents sentinels from reverting to a stale master after restart
-# (emptyDir config is regenerated each time).
+# 每次（重）啟時，Sentinel 會探測全部 Redis 節點找出當前 master，
+# 而不是固定寫死 node-0。
+# 這可避免重啟後回到過時 master（emptyDir 設定每次都會重建）。
 # ─────────────────────────────────────────────
 apiVersion: apps/v1
 kind: StatefulSet
@@ -135,7 +134,7 @@ metadata:
   labels:
     app: mps-redis-sentinel
 spec:
-  serviceName: mps-redis-sentinel-headless  # must match the headless Service name
+  serviceName: mps-redis-sentinel-headless  # 必須與 headless Service 名稱一致
   replicas: 3
   selector:
     matchLabels:
@@ -156,23 +155,23 @@ spec:
               ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
               REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
 
-              # ── Discover actual master ────────────────────────────────────
-              # Probe each Redis node; whichever answers ROLE=master wins.
-              # Falls back to node-0 when no Redis is reachable yet (cold start).
+              # ── 探測實際 master ───────────────────────────────────────────
+              # 依序探測每個 Redis 節點，回應 ROLE=master 的節點即為 master。
+              # 若目前無任何 Redis 可達（冷啟動），則退回 node-0。
               MASTER_HOST=""
               for i in 0 1 2; do
                 HOST="mps-redis-${i}.${REDIS_HEADLESS}"
                 ROLE=$(redis-cli -h "$HOST" -p 6379 --no-auth-warning ROLE 2>/dev/null | head -1)
                 if [ "$ROLE" = "master" ]; then
                   MASTER_HOST="$HOST"
-                  echo "[init] Found master via ROLE probe: ${MASTER_HOST}"
+                  echo "[init] 透過 ROLE 探測找到 master: ${MASTER_HOST}"
                   break
                 fi
               done
 
               if [ -z "$MASTER_HOST" ]; then
                 MASTER_HOST="mps-redis-0.${REDIS_HEADLESS}"
-                echo "[init] No master found via probe — defaulting to node-0 (bootstrap)"
+                echo "[init] ROLE 探測未找到 master，預設改用 node-0（bootstrap）"
               fi
               # ─────────────────────────────────────────────────────────────
 
@@ -182,14 +181,14 @@ spec:
               protected-mode no
               dir /home/redis/data
 
-              # resolve-hostnames: Sentinel resolves DNS when connecting to nodes.
-              # announce-hostnames: Sentinel tells clients the master/replica hostname,
-              #   not the raw IP — so Redisson always gets a resolvable name back.
+              # resolve-hostnames: Sentinel 連線節點時會解析 DNS。
+              # announce-hostnames: Sentinel 回傳給客戶端的是 master/replica 主機名，
+              #   而非原始 IP，確保 Redisson 取得可解析名稱。
               sentinel resolve-hostnames yes
               sentinel announce-hostnames yes
               EOF
 
-              # Append lines that need shell variable expansion
+              # 追加需由 shell 變數展開的設定行
               echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/redis/sentinel.conf
               echo "sentinel announce-port 26379"                 >> /home/redis/sentinel.conf
               echo ""                                             >> /home/redis/sentinel.conf

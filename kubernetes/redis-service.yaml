@@ -1,13 +1,13 @@
 # ─────────────────────────────────────────────
-# Headless Service for Redis StatefulSet
+# Redis StatefulSet 專用 Headless Service
 #
-# clusterIP: None  →  Kubernetes registers A records for each pod:
+# clusterIP: None 代表 Kubernetes 會為每個 Pod 建立 A 紀錄：
 #   mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local
 #   mps-redis-1.mps-redis-headless.front-mpos.svc.cluster.local
 #   mps-redis-2.mps-redis-headless.front-mpos.svc.cluster.local
 #
-# These stable names are what redis nodes announce via replica-announce-ip,
-# so Sentinel never stores volatile pod IPs.
+# Redis 節點會透過 replica-announce-ip 宣告這些穩定主機名，
+# Sentinel 因此不會記住會變動的 Pod IP。
 # ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
@@ -29,9 +29,9 @@ spec:
 
 ---
 # ─────────────────────────────────────────────
-# Headless Service for Sentinel StatefulSet
+# Sentinel StatefulSet 專用 Headless Service
 #
-# Provides stable per-pod DNS for sentinel peer discovery:
+# 提供每個 Sentinel Pod 穩定的 DNS，供節點彼此發現：
 #   mps-redis-sentinel-0.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
 #   mps-redis-sentinel-1.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
 #   mps-redis-sentinel-2.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
@@ -56,10 +56,10 @@ spec:
 
 ---
 # ─────────────────────────────────────────────
-# ClusterIP Service for application → Sentinel connectivity
+# 提供應用程式連線 Sentinel 的 ClusterIP Service
 #
-# The app (Redisson) connects to this stable VIP; Kubernetes load-balances
-# across all 3 sentinel pods. The service name matches app-configmap.yaml.
+# App (Redisson) 連到此穩定 VIP；Kubernetes 會把流量分配到
+# 3 個 Sentinel Pod。Service 名稱需與 app-configmap.yaml 一致。
 # ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
