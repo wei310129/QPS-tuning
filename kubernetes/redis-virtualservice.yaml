@@ -6,6 +6,8 @@ metadata:
 spec:
   hosts:
     - "mps-redis-i-ut00.fbl.com.tw"
+  gateways:
+    - mps-redis-gateway             # 綁定到 Gateway，允許外部流量進入
   tcp:
     - match:
         - port: 26379

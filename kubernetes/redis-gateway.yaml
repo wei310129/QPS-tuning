@@ -1,0 +1,15 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: mps-redis-gateway
+  namespace: front-mpos
+spec:
+  selector:
+    istio: ingressgateway          # 對應 istio-system 的 IngressGateway pod label
+  servers:
+    - port:
+        number: 26379
+        name: tcp-sentinel
+        protocol: TCP
+      hosts:
+        - "mps-redis-i-ut00.fbl.com.tw"
