@@ -1,0 +1,221 @@
+# ─────────────────────────────────────────────
+# Redis StatefulSet (3 nodes: node-0 = initial master, node-1/2 = replicas)
+#
+# Each pod announces itself via a stable headless-DNS hostname so that
+# Sentinel NEVER stores raw pod IPs — fixes the "stale IP" accumulation
+# problem that occurs when Deployments restart with new IPs after failover.
+#
+# On every (re)start the pod first queries Sentinel to discover who is
+# the current master.  This prevents split-brain when node-0 is deleted
+# and recreated after Sentinel has already promoted node-1 or node-2.
+# ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mps-redis
+  namespace: front-mpos
+  labels:
+    app: mps-redis
+spec:
+  serviceName: mps-redis-headless   # must match the headless Service name
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mps-redis
+  template:
+    metadata:
+      labels:
+        app: mps-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              HOSTNAME=$(hostname)
+              INDEX=${HOSTNAME##*-}
+              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-headless.front-mpos.svc.cluster.local"
+
+              # Write base config (no replicaof yet)
+              cat > /home/redis/redis.conf << 'EOF'
+              bind 0.0.0.0
+              port 6379
+              dir /home/redis/data
+              appendonly yes
+              protected-mode no
+              maxmemory 64mb
+              maxmemory-policy noeviction
+              EOF
+
+              # Append dynamic fields that need shell variable expansion
+              echo "replica-announce-ip  ${ANNOUNCE_HOSTNAME}" >> /home/redis/redis.conf
+              echo "replica-announce-port 6379"                 >> /home/redis/redis.conf
+
+              # ── Determine role ────────────────────────────────────────────
+              # Query every Sentinel to find who the current master is.
+              # If Sentinel is not yet available (first-boot bootstrap) fall
+              # back to the static INDEX-based rule.
+              SENTINEL_HEADLESS="mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
+              MASTER_HOST=""
+
+              for i in 0 1 2; do
+                SENTINEL="mps-redis-sentinel-${i}.${SENTINEL_HEADLESS}"
+                CANDIDATE=$(redis-cli -h "$SENTINEL" -p 26379 --no-auth-warning \
+                  SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -1)
+                # head -1 returns the hostname line; guard against empty/error output
+                if echo "$CANDIDATE" | grep -q "\."; then
+                  MASTER_HOST="$CANDIDATE"
+                  echo "[init] Sentinel ${SENTINEL} reports master: ${MASTER_HOST}"
+                  break
+                fi
+              done
+
+              if [ -n "$MASTER_HOST" ]; then
+                if [ "$MASTER_HOST" = "$ANNOUNCE_HOSTNAME" ]; then
+                  echo "[init] We ARE the sentinel-elected master — starting without replicaof"
+                  # no replicaof line needed
+                else
+                  echo "[init] Starting as replica of sentinel-elected master: ${MASTER_HOST}"
+                  echo "replicaof ${MASTER_HOST} 6379" >> /home/redis/redis.conf
+                fi
+              else
+                # Sentinel not reachable yet (bootstrap / cold start)
+                if [ "$INDEX" != "0" ]; then
+                  echo "[init] Bootstrap mode (no sentinel): starting as replica of node-0"
+                  echo "replicaof mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local 6379" \
+                    >> /home/redis/redis.conf
+                else
+                  echo "[init] Bootstrap mode (no sentinel): INDEX=0 — starting as master"
+                fi
+              fi
+              # ─────────────────────────────────────────────────────────────
+
+              exec redis-server /home/redis/redis.conf
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /home/redis/data
+            - name: config
+              mountPath: /home/redis
+          resources:
+            requests:
+              cpu: "0.1"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "256Mi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
+
+
+---
+# ─────────────────────────────────────────────
+# Redis Sentinel StatefulSet (3 replicas)
+#
+# Each sentinel announces its own stable headless-DNS hostname so that
+# sentinels discover each other by name, not by IP.
+#
+# On every (re)start the sentinel probes all Redis nodes to discover who
+# is currently the master, instead of always hardcoding node-0.
+# This prevents sentinels from reverting to a stale master after restart
+# (emptyDir config is regenerated each time).
+# ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mps-redis-sentinel
+  namespace: front-mpos
+  labels:
+    app: mps-redis-sentinel
+spec:
+  serviceName: mps-redis-sentinel-headless  # must match the headless Service name
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mps-redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: mps-redis-sentinel
+    spec:
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              HOSTNAME=$(hostname)
+              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
+              REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
+
+              # ── Discover actual master ────────────────────────────────────
+              # Probe each Redis node; whichever answers ROLE=master wins.
+              # Falls back to node-0 when no Redis is reachable yet (cold start).
+              MASTER_HOST=""
+              for i in 0 1 2; do
+                HOST="mps-redis-${i}.${REDIS_HEADLESS}"
+                ROLE=$(redis-cli -h "$HOST" -p 6379 --no-auth-warning ROLE 2>/dev/null | head -1)
+                if [ "$ROLE" = "master" ]; then
+                  MASTER_HOST="$HOST"
+                  echo "[init] Found master via ROLE probe: ${MASTER_HOST}"
+                  break
+                fi
+              done
+
+              if [ -z "$MASTER_HOST" ]; then
+                MASTER_HOST="mps-redis-0.${REDIS_HEADLESS}"
+                echo "[init] No master found via probe — defaulting to node-0 (bootstrap)"
+              fi
+              # ─────────────────────────────────────────────────────────────
+
+              cat > /home/redis/sentinel.conf << 'EOF'
+              port 26379
+              bind 0.0.0.0
+              protected-mode no
+              dir /home/redis/data
+
+              # resolve-hostnames: Sentinel resolves DNS when connecting to nodes.
+              # announce-hostnames: Sentinel tells clients the master/replica hostname,
+              #   not the raw IP — so Redisson always gets a resolvable name back.
+              sentinel resolve-hostnames yes
+              sentinel announce-hostnames yes
+              EOF
+
+              # Append lines that need shell variable expansion
+              echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/redis/sentinel.conf
+              echo "sentinel announce-port 26379"                 >> /home/redis/sentinel.conf
+              echo ""                                             >> /home/redis/sentinel.conf
+              echo "sentinel monitor mymaster ${MASTER_HOST} 6379 2"    >> /home/redis/sentinel.conf
+              echo "sentinel down-after-milliseconds mymaster 5000"     >> /home/redis/sentinel.conf
+              echo "sentinel failover-timeout mymaster 30000"           >> /home/redis/sentinel.conf
+              echo "sentinel parallel-syncs mymaster 1"                 >> /home/redis/sentinel.conf
+
+              exec redis-sentinel /home/redis/sentinel.conf
+          ports:
+            - containerPort: 26379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /home/redis/data
+            - name: config
+              mountPath: /home/redis
+          resources:
+            requests:
+              cpu: "0.1"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}

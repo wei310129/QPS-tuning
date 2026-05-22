@@ -8,7 +8,10 @@
       "Bash(Select-Object FullName)",
       "Bash(Sort-Object FullName)",
       "Bash(dir \"D:\\\\my-project\\\\QPS-tuning\")",
-      "Bash(grep -E \"^[^.]*$\")"
+      "Bash(grep -E \"^[^.]*$\")",
+      "Bash(kubectl get *)",
+      "Read(//mnt/d/my-project/QPS-tuning/**)",
+      "Read(//mnt/d/my-project/**)"
     ]
   }
 }
