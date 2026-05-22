@@ -110,6 +110,39 @@ public class RedisLoadController {
         return buildResult("C-seq-read", keys, valueBytes, elapsedMs, errors);
     }
 
+    @GetMapping("/batch-max")
+    public Map<String, Object> batchMaxWrite(
+            @RequestParam(defaultValue = "1000") int keys,
+            @RequestParam(defaultValue = "256") int valueBytes
+    ) {
+        keys = clamp(keys, 1, 10_000);
+        valueBytes = clamp(valueBytes, 1, 65_536);
+
+        String requestId = UUID.randomUUID().toString();
+        String value = "x".repeat(valueBytes);
+        long errors = 0;
+
+        long t0 = System.nanoTime();
+
+        try {
+            RBatch batch = redisson.createBatch(BatchOptions.defaults());
+
+            for (int i = 0; i < keys; i++) {
+                String key = KEY_PREFIX + "batch:" + requestId + ":" + i;
+                batch.<String>getBucket(key).setAsync(value);
+            }
+
+            batch.execute();
+        } catch (Exception e) {
+            errors++;
+            log.error("Batch write error", e);
+        }
+
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+
+        return buildResult("D-batch-write", keys, valueBytes, elapsedMs, errors);
+    }
+
     /**
      * D. Pipeline Batch 寫入 — 一次 round-trip 送出多個命令，對比循序的效率
      *
