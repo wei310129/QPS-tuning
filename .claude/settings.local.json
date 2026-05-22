@@ -3,7 +3,12 @@
     "allow": [
       "Bash(cd /d D:\\\\my-project\\\\QPS-tuning)",
       "Bash(Get-ChildItem -Force)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\my-project\\\\QPS-tuning\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(Sort-Object FullName)",
+      "Bash(dir \"D:\\\\my-project\\\\QPS-tuning\")",
+      "Bash(grep -E \"^[^.]*$\")"
     ]
   }
 }
