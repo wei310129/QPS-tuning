@@ -59,8 +59,7 @@ spec:
 # ClusterIP Service for application → Sentinel connectivity
 #
 # The app (Redisson) connects to this stable VIP; Kubernetes load-balances
-# across all 3 sentinel pods.  Name is unchanged so app-configmap.yaml and
-# the Istio VirtualService need no modification.
+# across all 3 sentinel pods. The service name matches app-configmap.yaml.
 # ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
