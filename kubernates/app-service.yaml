@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qps-tuning-service
+  namespace: front-mpos
+  labels:
+    app: qps-tuning
+spec:
+  type: ClusterIP
+  selector:
+    app: qps-tuning
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: http

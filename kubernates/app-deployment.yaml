@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qps-tuning
+  namespace: front-mpos
+  labels:
+    app: qps-tuning
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qps-tuning
+  template:
+    metadata:
+      labels:
+        app: qps-tuning
+    spec:
+      containers:
+        - name: qps-tuning
+          image: qps-tuning:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: qps-tuning-config
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
