@@ -1,14 +1,25 @@
+# ─────────────────────────────────────────────
+# Headless Service for Redis StatefulSet
+#
+# clusterIP: None  →  Kubernetes registers A records for each pod:
+#   mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local
+#   mps-redis-1.mps-redis-headless.front-mpos.svc.cluster.local
+#   mps-redis-2.mps-redis-headless.front-mpos.svc.cluster.local
+#
+# These stable names are what redis nodes announce via replica-announce-ip,
+# so Sentinel never stores volatile pod IPs.
+# ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
-  name: mps-redis-node-0-service
+  name: mps-redis-headless
   namespace: front-mpos
   labels:
-    app: mps-redis-node-0
+    app: mps-redis
 spec:
-  type: ClusterIP
+  clusterIP: None
   selector:
-    app: mps-redis-node-0
+    app: mps-redis
   ports:
     - name: redis
       protocol: TCP
@@ -17,44 +28,40 @@ spec:
 
 
 ---
+# ─────────────────────────────────────────────
+# Headless Service for Sentinel StatefulSet
+#
+# Provides stable per-pod DNS for sentinel peer discovery:
+#   mps-redis-sentinel-0.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
+#   mps-redis-sentinel-1.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
+#   mps-redis-sentinel-2.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
+# ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
-  name: mps-redis-node-1-service
+  name: mps-redis-sentinel-headless
   namespace: front-mpos
   labels:
-    app: mps-redis-node-1
+    app: mps-redis-sentinel
 spec:
-  type: ClusterIP
+  clusterIP: None
   selector:
-    app: mps-redis-node-1
+    app: mps-redis-sentinel
   ports:
-    - name: redis
+    - name: sentinel
       protocol: TCP
-      port: 6379
-      targetPort: 6379
+      port: 26379
+      targetPort: 26379
 
 
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: mps-redis-node-2-service
-  namespace: front-mpos
-  labels:
-    app: mps-redis-node-2
-spec:
-  type: ClusterIP
-  selector:
-    app: mps-redis-node-2
-  ports:
-    - name: redis
-      protocol: TCP
-      port: 6379
-      targetPort: 6379
-
-
----
+# ─────────────────────────────────────────────
+# ClusterIP Service for application → Sentinel connectivity
+#
+# The app (Redisson) connects to this stable VIP; Kubernetes load-balances
+# across all 3 sentinel pods.  Name is unchanged so app-configmap.yaml and
+# the Istio VirtualService need no modification.
+# ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:

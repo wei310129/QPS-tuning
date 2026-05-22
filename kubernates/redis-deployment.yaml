@@ -1,19 +1,27 @@
+# ─────────────────────────────────────────────
+# Redis StatefulSet (3 nodes: node-0 = initial master, node-1/2 = replicas)
+#
+# Each pod announces itself via a stable headless-DNS hostname so that
+# Sentinel NEVER stores raw pod IPs — fixes the "stale IP" accumulation
+# problem that occurs when Deployments restart with new IPs after failover.
+# ─────────────────────────────────────────────
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: mps-redis-node-0
+  name: mps-redis
   namespace: front-mpos
   labels:
-    app: mps-redis-node-0
+    app: mps-redis
 spec:
-  replicas: 1
+  serviceName: mps-redis-headless   # must match the headless Service name
+  replicas: 3
   selector:
     matchLabels:
-      app: mps-redis-node-0
+      app: mps-redis
   template:
     metadata:
       labels:
-        app: mps-redis-node-0
+        app: mps-redis
     spec:
       containers:
         - name: redis
@@ -22,13 +30,34 @@ spec:
             - sh
             - -c
             - |
-              cat > /home/redis/redis.conf <<EOF
+              # StatefulSet guarantees pod name = mps-redis-{0,1,2}
+              HOSTNAME=$(hostname)
+              INDEX=${HOSTNAME##*-}
+              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-headless.front-mpos.svc.cluster.local"
+
+              cat > /home/redis/redis.conf <<CONF
               bind 0.0.0.0
               port 6379
               dir /home/redis/data
               appendonly yes
               protected-mode no
-              EOF
+
+              maxmemory 64mb
+              maxmemory-policy noeviction
+
+              # Announce by stable DNS so Sentinel records hostname, not pod IP.
+              # This is the key fix: after failover, Sentinel queries the master for
+              # INFO replication and gets back these hostnames instead of volatile IPs.
+              replica-announce-ip ${ANNOUNCE_HOSTNAME}
+              replica-announce-port 6379
+              CONF
+
+              # Only non-zero pods start as replicas; node-0 bootstraps as master.
+              # After a failover Sentinel will re-issue REPLICAOF to whichever pod
+              # is needed, so this static config is only used on first boot.
+              if [ "$INDEX" != "0" ]; then
+                echo "replicaof mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local 6379" >> /home/redis/redis.conf
+              fi
 
               redis-server /home/redis/redis.conf
           ports:
@@ -42,10 +71,10 @@ spec:
           resources:
             requests:
               cpu: "0.1"
-              memory: "128Mi"
+              memory: "256Mi"
             limits:
               cpu: "2"
-              memory: "12Gi"
+              memory: "256Mi"
       volumes:
         - name: data
           emptyDir: {}
@@ -54,128 +83,21 @@ spec:
 
 
 ---
+# ─────────────────────────────────────────────
+# Redis Sentinel StatefulSet (3 replicas)
+#
+# Each sentinel announces its own stable headless-DNS hostname so that
+# sentinels discover each other by name, not by IP.
+# ─────────────────────────────────────────────
 apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mps-redis-node-1
-  namespace: front-mpos
-  labels:
-    app: mps-redis-node-1
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mps-redis-node-1
-  template:
-    metadata:
-      labels:
-        app: mps-redis-node-1
-    spec:
-      containers:
-        - name: redis
-          image: redis:7-alpine
-          command:
-            - sh
-            - -c
-            - |
-              cat > /home/redis/redis.conf <<EOF
-              bind 0.0.0.0
-              port 6379
-              dir /home/redis/data
-              appendonly yes
-              protected-mode no
-              replicaof mps-redis-node-0-service 6379
-              EOF
-
-              redis-server /home/redis/redis.conf
-          ports:
-            - containerPort: 6379
-              protocol: TCP
-          volumeMounts:
-            - name: data
-              mountPath: /home/redis/data
-            - name: config
-              mountPath: /home/redis
-          resources:
-            requests:
-              cpu: "0.1"
-              memory: "128Mi"
-            limits:
-              cpu: "2"
-              memory: "12Gi"
-      volumes:
-        - name: data
-          emptyDir: {}
-        - name: config
-          emptyDir: {}
-
-
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mps-redis-node-2
-  namespace: front-mpos
-  labels:
-    app: mps-redis-node-2
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mps-redis-node-2
-  template:
-    metadata:
-      labels:
-        app: mps-redis-node-2
-    spec:
-      containers:
-        - name: redis
-          image: redis:7-alpine
-          command:
-            - sh
-            - -c
-            - |
-              cat > /home/redis/redis.conf <<EOF
-              bind 0.0.0.0
-              port 6379
-              dir /home/redis/data
-              appendonly yes
-              protected-mode no
-              replicaof mps-redis-node-0-service 6379
-              EOF
-
-              redis-server /home/redis/redis.conf
-          ports:
-            - containerPort: 6379
-              protocol: TCP
-          volumeMounts:
-            - name: data
-              mountPath: /home/redis/data
-            - name: config
-              mountPath: /home/redis
-          resources:
-            requests:
-              cpu: "0.1"
-              memory: "128Mi"
-            limits:
-              cpu: "2"
-              memory: "12Gi"
-      volumes:
-        - name: data
-          emptyDir: {}
-        - name: config
-          emptyDir: {}
-
-
----
-apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: mps-redis-sentinel
   namespace: front-mpos
   labels:
     app: mps-redis-sentinel
 spec:
+  serviceName: mps-redis-sentinel-headless  # must match the headless Service name
   replicas: 3
   selector:
     matchLabels:
@@ -192,18 +114,31 @@ spec:
             - sh
             - -c
             - |
-              cat > /home/redis/sentinel.conf <<EOF
+              HOSTNAME=$(hostname)
+              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
+
+              cat > /home/redis/sentinel.conf <<CONF
               port 26379
               bind 0.0.0.0
               protected-mode no
               dir /home/redis/data
+
+              # resolve-hostnames: Sentinel resolves DNS when connecting to nodes.
+              # announce-hostnames: Sentinel tells clients the master/replica hostname,
+              #   not the raw IP — so Redisson always gets a resolvable name back.
               sentinel resolve-hostnames yes
               sentinel announce-hostnames yes
-              sentinel monitor mymaster mps-redis-node-0-service 6379 2
+
+              # Announce this sentinel pod by its own stable hostname so the
+              # sentinel cluster uses DNS instead of IP for peer discovery.
+              sentinel announce-ip ${ANNOUNCE_HOSTNAME}
+              sentinel announce-port 26379
+
+              sentinel monitor mymaster mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local 6379 2
               sentinel down-after-milliseconds mymaster 5000
               sentinel failover-timeout mymaster 30000
               sentinel parallel-syncs mymaster 1
-              EOF
+              CONF
 
               redis-sentinel /home/redis/sentinel.conf
           ports:
