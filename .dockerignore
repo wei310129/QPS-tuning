@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+.vscode
+.claude
+target
+docker/redis-data
+*.iml
+*.log
