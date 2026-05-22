@@ -5,8 +5,20 @@ spring:
 #    virtual:
 #      enabled: true
 
-redisson:
-  sentinelServersConfig:
-    masterName: ${REDIS_MASTER_NAME:mymaster}
-    sentinelAddresses:
-      - ${REDIS_SENTINEL_ADDRESS:redis://127.0.0.1:26379}
+app:
+  redis:
+    mode: ${REDIS_MODE:single}
+    address: ${REDIS_ADDRESS:redis://127.0.0.1:6379}
+    sentinel:
+      master-name: ${REDIS_MASTER_NAME:mymaster}
+      addresses: ${REDIS_SENTINEL_ADDRESSES:${REDIS_SENTINEL_ADDRESS:redis://127.0.0.1:26379}}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

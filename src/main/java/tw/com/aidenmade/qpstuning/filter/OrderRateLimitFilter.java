@@ -20,15 +20,11 @@ import java.io.IOException;
 @Component
 public class OrderRateLimitFilter extends OncePerRequestFilter {
 
-    private final RRateLimiter limiter;
+    private final RedissonClient redissonClient;
+    private volatile RRateLimiter limiter;
 
     public OrderRateLimitFilter(RedissonClient redissonClient) {
-        // 全域 key：所有 instance 共用
-        this.limiter = redissonClient.getRateLimiter("rate:order:global");
-
-        // 設定：每 1 秒最多 100 次
-        // RateType.OVERALL = 全體共享配額（你要的 global limit）
-        this.limiter.setRate(RateType.OVERALL, 100, 1, RateIntervalUnit.SECONDS);
+        this.redissonClient = redissonClient;
     }
 
     @Override
@@ -43,7 +39,7 @@ public class OrderRateLimitFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        boolean allowed = limiter.tryAcquire(1);
+        boolean allowed = getLimiter().tryAcquire(1);
 
         if (!allowed) {
             log.warn("RATE LIMITED uri={} method={}", request.getRequestURI(), request.getMethod());
@@ -55,5 +51,20 @@ public class OrderRateLimitFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private RRateLimiter getLimiter() {
+        RRateLimiter current = limiter;
+        if (current == null) {
+            synchronized (this) {
+                current = limiter;
+                if (current == null) {
+                    current = redissonClient.getRateLimiter("rate:order:global");
+                    current.setRate(RateType.OVERALL, 100, 1, RateIntervalUnit.SECONDS);
+                    limiter = current;
+                }
+            }
+        }
+        return current;
     }
 }

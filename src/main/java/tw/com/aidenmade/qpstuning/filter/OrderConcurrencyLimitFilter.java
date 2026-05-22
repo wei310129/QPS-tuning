@@ -19,12 +19,11 @@ import java.time.Duration;
 @Component
 public class OrderConcurrencyLimitFilter extends OncePerRequestFilter {
 
-    private final RSemaphore semaphore;
+    private final RedissonClient redissonClient;
+    private volatile RSemaphore semaphore;
 
     public OrderConcurrencyLimitFilter(RedissonClient redissonClient) {
-        this.semaphore = redissonClient.getSemaphore("conc:order:global");
-        // 只在第一次初始化成功（已存在就不改）
-        this.semaphore.trySetPermits(100, Duration.ofSeconds(1L));
+        this.redissonClient = redissonClient;
     }
 
     @Override
@@ -36,11 +35,12 @@ public class OrderConcurrencyLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
 
-        boolean acquired = semaphore.tryAcquire();
+        RSemaphore currentSemaphore = getSemaphore();
+        boolean acquired = currentSemaphore.tryAcquire();
 
         if (!acquired) {
             log.warn("CONCURRENCY LIMITED uri={} method={}", request.getRequestURI(), request.getMethod());
-            response.setStatus(503); // 或 429，看你語意
+            response.setStatus(503);
             response.setContentType("text/plain; charset=UTF-8");
             response.getWriter().write("Server is busy");
             return;
@@ -49,7 +49,22 @@ public class OrderConcurrencyLimitFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(request, response);
         } finally {
-            semaphore.release();
+            currentSemaphore.release();
         }
+    }
+
+    private RSemaphore getSemaphore() {
+        RSemaphore current = semaphore;
+        if (current == null) {
+            synchronized (this) {
+                current = semaphore;
+                if (current == null) {
+                    current = redissonClient.getSemaphore("conc:order:global");
+                    current.trySetPermits(100, Duration.ofSeconds(1L));
+                    semaphore = current;
+                }
+            }
+        }
+        return current;
     }
 }
