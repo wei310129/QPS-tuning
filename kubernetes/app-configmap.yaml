@@ -7,4 +7,4 @@ data:
   REDIS_MODE: sentinel
   REDIS_MASTER_NAME: mymaster
   REDIS_SENTINEL_ADDRESSES: redis://mps-redis-sentinel-service.front-mpos.svc.cluster.local:26379
-  JAVA_OPTS: -XX:MaxRAMPercentage=75 -XX:+UseG1GC
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+UseG1GC -XX:MaxDirectMemorySize=256m

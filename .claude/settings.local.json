@@ -11,7 +11,10 @@
       "Bash(grep -E \"^[^.]*$\")",
       "Bash(kubectl get *)",
       "Read(//mnt/d/my-project/QPS-tuning/**)",
-      "Read(//mnt/d/my-project/**)"
+      "Read(//mnt/d/my-project/**)",
+      "Bash(./mvnw compile *)",
+      "Bash(jar tf *)",
+      "Bash(javap *)"
     ]
   }
 }
