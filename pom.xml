@@ -133,6 +133,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <image>
+                        <name>qps-tuning:latest</name>
                         <runImage>paketobuildpacks/ubuntu-noble-run:latest</runImage>
                     </image>
                     <excludes>
