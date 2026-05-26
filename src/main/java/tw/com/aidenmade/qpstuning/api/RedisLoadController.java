@@ -344,13 +344,16 @@ public class RedisLoadController {
                 "until (n_us - s_us) >= dur\n" +
                 "return i";
 
-        log.info("[oom-and-failover] Step2 start: Lua busy-loop {} seconds", blockSeconds);
-        String luaStatus = "completed";
+        log.info("[oom-and-failover] Step2 start: Lua busy-loop {} seconds (fire-and-forget)", blockSeconds);
+        String luaStatus = "fired";
         String luaError  = null;
         try {
-            // Redisson 預設 timeout(3s) 會先於 Lua 完成而到期並拋出例外，屬預期行為
-            // Redis 端 Lua 仍繼續執行直到計時結束，確保 Sentinel 能偵測到 master 無回應
-            redisson.getScript(StringCodec.INSTANCE).eval(
+            // fire-and-forget：送出 EVAL 後不等待回應，也不 retry
+            // 原因：eval() 同步呼叫在 Redisson timeout(3s) 後會自動 retry，
+            //       把 Lua script 送給 failover 後的新 master，造成連鎖 failover
+            // evalAsync() 送出後直接返回，不管 future 結果，Redisson 不會 retry
+            // Redis 端 Lua 仍繼續執行到計時結束，Sentinel 會偵測到 master 無回應
+            redisson.getScript(StringCodec.INSTANCE).evalAsync(
                     RScript.Mode.READ_WRITE,
                     luaScript,
                     RScript.ReturnType.LONG,
@@ -358,10 +361,9 @@ public class RedisLoadController {
                     String.valueOf(blockSeconds)
             );
         } catch (Exception e) {
-            luaStatus = "client_timeout_or_failover";
+            luaStatus = "send_error";
             luaError  = e.getClass().getSimpleName() + ": " + e.getMessage();
-            log.warn("[oom-and-failover] Step2 exception (expected — Redisson timeout while Redis blocks): {}",
-                    e.getMessage());
+            log.warn("[oom-and-failover] Step2 send error: {}", e.getMessage());
         }
 
         long totalElapsedMs = (System.nanoTime() - t0) / 1_000_000;
