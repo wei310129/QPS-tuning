@@ -4,6 +4,11 @@ metadata:
   name: mps-redis-config
   namespace: front-mpos
 data:
+  REDIS_POD_BASENAME: mps-redis
   REDIS_HEADLESS_SERVICE: mps-redis-headless
+  REDIS_MASTER_NAME: mymaster
+  REDIS_REPLICA_COUNT: "3"
+  REDIS_PORT: "6379"
+  SENTINEL_PORT: "26379"
   CLUSTER_DOMAIN: cluster.local
 

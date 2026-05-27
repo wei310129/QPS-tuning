@@ -1,12 +1,13 @@
 # ─────────────────────────────────────────────
-# Redis StatefulSet（3 節點：node-0 為初始 master，node-1/2 為 replica）
+# Redis StatefulSet（目前 3 節點：node-0 為 bootstrap 初始 master，node-1/2 為 replica）
 # 每個 Pod 包含 Redis + Sentinel 兩個 container（sidecar 模式）
 #
 # 每個 Pod 會用穩定的 headless DNS 主機名宣告自己，讓
 # Sentinel 不會記錄原始 Pod IP，避免 failover 後重建造成
 # 舊 IP 持續累積的問題。
 #
-# 每次（重）啟時，先由 initContainer 探測/決定 master，
+# 每次（重）啟時，先由 initContainer 探測目前 master，
+# 整理出最終採用的 master（effective master），
 # 並預先產生 redis.conf、sentinel.conf。
 # 主容器僅負責啟動 Redis/Sentinel，降低 shell 邏輯維護成本。
 # ─────────────────────────────────────────────
@@ -38,77 +39,82 @@ spec:
             - sh
             - -c
             - |
-              HOSTNAME=$(hostname)
-              INDEX=${HOSTNAME##*-}
-              POD_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-              REDIS_HEADLESS="${REDIS_HEADLESS_SERVICE}.${POD_NAMESPACE}.svc.${CLUSTER_DOMAIN}"
-              ANNOUNCE_HOSTNAME="${HOSTNAME}.${REDIS_HEADLESS}"
-              MASTER_HOST=""
+              POD_NAME=$(hostname)
+              POD_INDEX=${POD_NAME##*-}
+              NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+              REDIS_HEADLESS_SERVICE_FQDN="${REDIS_HEADLESS_SERVICE}.${NAMESPACE}.svc.${CLUSTER_DOMAIN}"
+              REDIS_POD_FQDN="${POD_NAME}.${REDIS_HEADLESS_SERVICE_FQDN}"
+              DISCOVERED_MASTER_POD_FQDN=""
+              EFFECTIVE_MASTER_POD_FQDN=""
 
-              echo "[bootstrap] Pod=${HOSTNAME}, INDEX=${INDEX}"
+              echo "[bootstrap] Pod=${POD_NAME}, POD_INDEX=${POD_INDEX}"
 
-              # 優先詢問其他 Pod 的 Sentinel 目前 master，避免重啟時回退成固定 node-0。
-              for i in 0 1 2; do
-                if [ "mps-redis-${i}" = "$HOSTNAME" ]; then
+              # 優先詢問其他 Pod 的 Sentinel 目前 master，避免重啟時誤退回固定 node-0。
+              # 依 REDIS_REPLICA_COUNT 逐一探測，並直接比對 ordinal 跳過自己。
+              i=0
+              while [ "$i" -lt "$REDIS_REPLICA_COUNT" ]; do
+                if [ "$i" = "$POD_INDEX" ]; then
+                  i=$((i + 1))
                   continue
                 fi
-                SENTINEL="mps-redis-${i}.${REDIS_HEADLESS}"
-                CANDIDATE=$(redis-cli -h "$SENTINEL" -p 26379 --no-auth-warning \
-                  SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -1)
-                if [ -n "$CANDIDATE" ]; then
-                  MASTER_HOST="$CANDIDATE"
-                  echo "[bootstrap] Sentinel ${SENTINEL}:26379 回報 master: ${MASTER_HOST}"
+                SENTINEL_POD_FQDN="${REDIS_POD_BASENAME}-${i}.${REDIS_HEADLESS_SERVICE_FQDN}"
+                DISCOVERED_MASTER_POD_FQDN=$(redis-cli -h "$SENTINEL_POD_FQDN" -p "$SENTINEL_PORT" --no-auth-warning \
+                  SENTINEL get-master-addr-by-name "$REDIS_MASTER_NAME" 2>/dev/null | head -1)
+                if [ -n "$DISCOVERED_MASTER_POD_FQDN" ]; then
+                  echo "[bootstrap] Sentinel ${SENTINEL_POD_FQDN}:${SENTINEL_PORT} 回報 master: ${DISCOVERED_MASTER_POD_FQDN}"
                   break
                 fi
+                i=$((i + 1))
               done
 
-              # 若 Sentinel 暫時不可達（冷啟動），退回固定 bootstrap 規則。
-              if [ -z "$MASTER_HOST" ] && [ "$INDEX" != "0" ]; then
-                MASTER_HOST="mps-redis-0.${REDIS_HEADLESS}"
-                echo "[bootstrap] Sentinel 不可達，改用 bootstrap master: ${MASTER_HOST}"
+              # 整理最終採用的 master：優先用 Sentinel 查到的結果；
+              # 若所有 Sentinel 都不可達，才退回 bootstrap 規則。
+              EFFECTIVE_MASTER_POD_FQDN="$DISCOVERED_MASTER_POD_FQDN"
+              if [ -z "$EFFECTIVE_MASTER_POD_FQDN" ]; then
+                if [ "$POD_INDEX" != "0" ]; then
+                  EFFECTIVE_MASTER_POD_FQDN="${REDIS_POD_BASENAME}-0.${REDIS_HEADLESS_SERVICE_FQDN}"
+                  echo "[bootstrap] Sentinel 不可達，改用 bootstrap master: ${EFFECTIVE_MASTER_POD_FQDN}"
+                else
+                  EFFECTIVE_MASTER_POD_FQDN="$REDIS_POD_FQDN"
+                  echo "[bootstrap] Sentinel 不可達，且目前為 node-0，自己作為 bootstrap master"
+                fi
               fi
 
               # 產生 Redis 設定
-              cat > /home/redis/redis.conf << 'EOF'
+              cat > /home/redis/redis.conf <<EOF
               bind 0.0.0.0
-              port 6379
+              port ${REDIS_PORT}
               dir /home/redis/data
               appendonly yes
               protected-mode no
               maxmemory 64mb
               maxmemory-policy noeviction
+              replica-announce-ip ${REDIS_POD_FQDN}
+              replica-announce-port ${REDIS_PORT}
               EOF
-              echo "replica-announce-ip  ${ANNOUNCE_HOSTNAME}" >> /home/redis/redis.conf
-              echo "replica-announce-port 6379"                 >> /home/redis/redis.conf
-              if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "$ANNOUNCE_HOSTNAME" ]; then
-                echo "replicaof ${MASTER_HOST} 6379" >> /home/redis/redis.conf
-                echo "[bootstrap] Redis 以 replica 啟動，上游 master: ${MASTER_HOST}"
+              if [ "$EFFECTIVE_MASTER_POD_FQDN" != "$REDIS_POD_FQDN" ]; then
+                echo "replicaof ${EFFECTIVE_MASTER_POD_FQDN} ${REDIS_PORT}" >> /home/redis/redis.conf
+                echo "[bootstrap] Redis 以 replica 啟動，上游 master: ${EFFECTIVE_MASTER_POD_FQDN}"
               else
                 echo "[bootstrap] Redis 以 master 啟動"
               fi
 
-              # 產生 Sentinel 設定（若本機為 master，直接監控自己）
-              SENTINEL_MASTER_HOST="$MASTER_HOST"
-              if [ -z "$SENTINEL_MASTER_HOST" ]; then
-                SENTINEL_MASTER_HOST="$ANNOUNCE_HOSTNAME"
-              fi
-
-              cat > /home/sentinel/sentinel.conf << 'EOF'
-              port 26379
+              # 產生 Sentinel 設定（沿用同一個 effective master 決策）
+              cat > /home/sentinel/sentinel.conf <<EOF
+              port ${SENTINEL_PORT}
               bind 0.0.0.0
               protected-mode no
               dir /home/sentinel/data
               sentinel resolve-hostnames yes
               sentinel announce-hostnames yes
+              sentinel announce-ip ${REDIS_POD_FQDN}
+              sentinel announce-port ${SENTINEL_PORT}
+              sentinel monitor ${REDIS_MASTER_NAME} ${EFFECTIVE_MASTER_POD_FQDN} ${REDIS_PORT} 2
+              sentinel down-after-milliseconds ${REDIS_MASTER_NAME} 5000
+              sentinel failover-timeout ${REDIS_MASTER_NAME} 30000
+              sentinel parallel-syncs ${REDIS_MASTER_NAME} 1
               EOF
-              echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/sentinel/sentinel.conf
-              echo "sentinel announce-port 26379"                 >> /home/sentinel/sentinel.conf
-              echo ""                                             >> /home/sentinel/sentinel.conf
-              echo "sentinel monitor mymaster ${SENTINEL_MASTER_HOST} 6379 2" >> /home/sentinel/sentinel.conf
-              echo "sentinel down-after-milliseconds mymaster 5000"           >> /home/sentinel/sentinel.conf
-              echo "sentinel failover-timeout mymaster 30000"                 >> /home/sentinel/sentinel.conf
-              echo "sentinel parallel-syncs mymaster 1"                       >> /home/sentinel/sentinel.conf
-              echo "[bootstrap] Sentinel monitor target: ${SENTINEL_MASTER_HOST}:6379"
+              echo "[bootstrap] Sentinel monitor target: ${EFFECTIVE_MASTER_POD_FQDN}:${REDIS_PORT}"
           volumeMounts:
             - name: redis-config
               mountPath: /home/redis
@@ -142,16 +148,20 @@ spec:
         # ── Sentinel Sidecar ────────────────────────────────────────────────
         # 與 Redis 同一 Pod，共用 Pod IP 和 headless DNS 名稱，
         # 差別只在 port（26379 vs 6379）。
+        # sentinel.conf 已由 initContainer 預先產生；這裡只等待本機 Redis 就緒後啟動 Sentinel。
         # announce-ip 設為本 Pod 的 FQDN，讓其他 Sentinel 和客戶端
         # 透過可解析的名稱找到此 Sentinel，而非不穩定的 Pod IP。
         - name: sentinel
           image: redis:7-alpine
+          envFrom:
+            - configMapRef:
+                name: mps-redis-config
           command:
             - sh
             - -c
             - |
-              echo "[sentinel-init] 等待本機 Redis (localhost:6379) 就緒..."
-              until redis-cli -h localhost -p 6379 --no-auth-warning PING 2>/dev/null | grep -q PONG; do
+              echo "[sentinel-init] 等待本機 Redis (localhost:${REDIS_PORT}) 就緒..."
+              until redis-cli -h localhost -p "$REDIS_PORT" --no-auth-warning PING 2>/dev/null | grep -q PONG; do
                 sleep 1
               done
               echo "[sentinel-init] 本機 Redis 就緒"
