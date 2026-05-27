@@ -31,13 +31,22 @@ spec:
       initContainers:
         - name: config-bootstrap
           image: redis:7-alpine
+          env:
+            - name: REDIS_HEADLESS_SERVICE
+              value: mps-redis-headless
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CLUSTER_DOMAIN
+              value: cluster.local
           command:
             - sh
             - -c
             - |
               HOSTNAME=$(hostname)
               INDEX=${HOSTNAME##*-}
-              REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
+              REDIS_HEADLESS="${REDIS_HEADLESS_SERVICE}.${POD_NAMESPACE}.svc.${CLUSTER_DOMAIN}"
               ANNOUNCE_HOSTNAME="${HOSTNAME}.${REDIS_HEADLESS}"
               MASTER_HOST=""
 
