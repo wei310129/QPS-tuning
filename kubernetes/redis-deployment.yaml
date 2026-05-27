@@ -14,27 +14,27 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: mps-redis
+  name: mps-redis-ha
   namespace: front-mpos
   labels:
-    app: mps-redis
+    app: mps-redis-ha
 spec:
-  serviceName: mps-redis-headless   # 必須與 headless Service 名稱一致
+  serviceName: mps-redis-ha-headless   # 必須與 headless Service 名稱一致
   replicas: 3
   selector:
     matchLabels:
-      app: mps-redis
+      app: mps-redis-ha
   template:
     metadata:
       labels:
-        app: mps-redis
+        app: mps-redis-ha
     spec:
       initContainers:
         - name: config-bootstrap
           image: redis:7-alpine
           envFrom:
             - configMapRef:
-                name: mps-redis-config
+                name: mps-redis-ha-config
           command:
             - sh
             - -c
@@ -155,7 +155,7 @@ spec:
           image: redis:7-alpine
           envFrom:
             - configMapRef:
-                name: mps-redis-config
+                name: mps-redis-ha-config
           command:
             - sh
             - -c

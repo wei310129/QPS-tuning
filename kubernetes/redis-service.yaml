@@ -2,9 +2,9 @@
 # Redis StatefulSet 專用 Headless Service
 #
 # clusterIP: None 代表 Kubernetes 會為每個 Pod 建立 A 紀錄：
-#   mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local
-#   mps-redis-1.mps-redis-headless.front-mpos.svc.cluster.local
-#   mps-redis-2.mps-redis-headless.front-mpos.svc.cluster.local
+#   mps-redis-ha-0.mps-redis-ha-headless.front-mpos.svc.cluster.local
+#   mps-redis-ha-1.mps-redis-ha-headless.front-mpos.svc.cluster.local
+#   mps-redis-ha-2.mps-redis-ha-headless.front-mpos.svc.cluster.local
 #
 # Sidecar 架構下，Redis (6379) 和 Sentinel (26379) 同在一個 Pod，
 # 因此同時開放兩個 port，讓節點間可透過穩定 FQDN 互相通信。
@@ -12,14 +12,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: mps-redis-headless
+  name: mps-redis-ha-headless
   namespace: front-mpos
   labels:
-    app: mps-redis
+    app: mps-redis-ha
 spec:
   clusterIP: None
   selector:
-    app: mps-redis
+    app: mps-redis-ha
   ports:
     - name: redis
       protocol: TCP
@@ -42,14 +42,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mps-redis-sentinel-service
+  name: mps-redis-ha-sentinel-service
   namespace: front-mpos
   labels:
-    app: mps-redis
+    app: mps-redis-ha
 spec:
   type: ClusterIP
   selector:
-    app: mps-redis
+    app: mps-redis-ha
   ports:
     - name: sentinel
       protocol: TCP
