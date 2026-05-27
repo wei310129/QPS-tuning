@@ -6,13 +6,9 @@
 # Sentinel 不會記錄原始 Pod IP，避免 failover 後重建造成
 # 舊 IP 持續累積的問題。
 #
-# 每次（重）啟時，Redis container 會先詢問其他 Pod 的 Sentinel
-# 目前 master 是誰（sidecar 架構下 Sentinel 在同一 headless service
-# 的各 Pod 上，port 26379）。這可避免 node-0 被刪除並重建時，
-# Sentinel 已提升 node-1/2 卻發生 split-brain。
-#
-# Sentinel container 啟動前會等待本機 Redis 就緒，
-# 然後探測所有 Redis 節點找出當前 master。
+# 每次（重）啟時，先由 initContainer 探測/決定 master，
+# 並預先產生 redis.conf、sentinel.conf。
+# 主容器僅負責啟動 Redis/Sentinel，降低 shell 邏輯維護成本。
 # ─────────────────────────────────────────────
 apiVersion: apps/v1
 kind: StatefulSet
@@ -32,10 +28,8 @@ spec:
       labels:
         app: mps-redis
     spec:
-      containers:
-
-        # ── Redis 主程序 ────────────────────────────────────────────────────
-        - name: redis
+      initContainers:
+        - name: config-bootstrap
           image: redis:7-alpine
           command:
             - sh
@@ -43,9 +37,34 @@ spec:
             - |
               HOSTNAME=$(hostname)
               INDEX=${HOSTNAME##*-}
-              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-headless.front-mpos.svc.cluster.local"
+              REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
+              ANNOUNCE_HOSTNAME="${HOSTNAME}.${REDIS_HEADLESS}"
+              MASTER_HOST=""
 
-              # 先寫入基礎設定（暫不帶 replicaof）
+              echo "[bootstrap] Pod=${HOSTNAME}, INDEX=${INDEX}"
+
+              # 優先詢問其他 Pod 的 Sentinel 目前 master，避免重啟時回退成固定 node-0。
+              for i in 0 1 2; do
+                if [ "mps-redis-${i}" = "$HOSTNAME" ]; then
+                  continue
+                fi
+                SENTINEL="mps-redis-${i}.${REDIS_HEADLESS}"
+                CANDIDATE=$(redis-cli -h "$SENTINEL" -p 26379 --no-auth-warning \
+                  SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -1)
+                if [ -n "$CANDIDATE" ]; then
+                  MASTER_HOST="$CANDIDATE"
+                  echo "[bootstrap] Sentinel ${SENTINEL}:26379 回報 master: ${MASTER_HOST}"
+                  break
+                fi
+              done
+
+              # 若 Sentinel 暫時不可達（冷啟動），退回固定 bootstrap 規則。
+              if [ -z "$MASTER_HOST" ] && [ "$INDEX" != "0" ]; then
+                MASTER_HOST="mps-redis-0.${REDIS_HEADLESS}"
+                echo "[bootstrap] Sentinel 不可達，改用 bootstrap master: ${MASTER_HOST}"
+              fi
+
+              # 產生 Redis 設定
               cat > /home/redis/redis.conf << 'EOF'
               bind 0.0.0.0
               port 6379
@@ -55,53 +74,51 @@ spec:
               maxmemory 64mb
               maxmemory-policy noeviction
               EOF
-
-              # 追加需由 shell 變數展開的欄位
               echo "replica-announce-ip  ${ANNOUNCE_HOSTNAME}" >> /home/redis/redis.conf
               echo "replica-announce-port 6379"                 >> /home/redis/redis.conf
-
-              # ── 判斷角色 ────────────────────────────────────────────────────
-              # 詢問其他 Pod 的 Sentinel（sidecar 架構，port 26379）找出目前 master。
-              # 跳過自身：本機 Sentinel 此時尚未啟動。
-              # 若所有 Sentinel 皆不可達（首次 bootstrap），退回固定 INDEX 規則。
-              REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
-              MASTER_HOST=""
-
-              for i in 0 1 2; do
-                # 跳過自身（本機 Sentinel 尚未啟動）
-                if [ "mps-redis-${i}" = "$HOSTNAME" ]; then
-                  continue
-                fi
-                SENTINEL="mps-redis-${i}.${REDIS_HEADLESS}"
-                CANDIDATE=$(redis-cli -h "$SENTINEL" -p 26379 --no-auth-warning \
-                  SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -1)
-                if echo "$CANDIDATE" | grep -q "\."; then
-                  MASTER_HOST="$CANDIDATE"
-                  echo "[init] Sentinel ${SENTINEL}:26379 回報 master: ${MASTER_HOST}"
-                  break
-                fi
-              done
-
-              if [ -n "$MASTER_HOST" ]; then
-                if [ "$MASTER_HOST" = "$ANNOUNCE_HOSTNAME" ]; then
-                  echo "[init] 目前節點就是 Sentinel 選出的 master，無需 replicaof"
-                else
-                  echo "[init] 以 Sentinel 選出的 master 為上游啟動 replica: ${MASTER_HOST}"
-                  echo "replicaof ${MASTER_HOST} 6379" >> /home/redis/redis.conf
-                fi
+              if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "$ANNOUNCE_HOSTNAME" ]; then
+                echo "replicaof ${MASTER_HOST} 6379" >> /home/redis/redis.conf
+                echo "[bootstrap] Redis 以 replica 啟動，上游 master: ${MASTER_HOST}"
               else
-                # Sentinel 尚不可達（bootstrap / 冷啟動）
-                if [ "$INDEX" != "0" ]; then
-                  echo "[init] Bootstrap 模式（無 sentinel）：以 node-0 為上游啟動 replica"
-                  echo "replicaof mps-redis-0.${REDIS_HEADLESS} 6379" \
-                    >> /home/redis/redis.conf
-                else
-                  echo "[init] Bootstrap 模式（無 sentinel）：INDEX=0，以 master 啟動"
-                fi
+                echo "[bootstrap] Redis 以 master 啟動"
               fi
-              # ─────────────────────────────────────────────────────────────
 
-              exec redis-server /home/redis/redis.conf
+              # 產生 Sentinel 設定（若本機為 master，直接監控自己）
+              SENTINEL_MASTER_HOST="$MASTER_HOST"
+              if [ -z "$SENTINEL_MASTER_HOST" ]; then
+                SENTINEL_MASTER_HOST="$ANNOUNCE_HOSTNAME"
+              fi
+
+              cat > /home/sentinel/sentinel.conf << 'EOF'
+              port 26379
+              bind 0.0.0.0
+              protected-mode no
+              dir /home/sentinel/data
+              sentinel resolve-hostnames yes
+              sentinel announce-hostnames yes
+              EOF
+              echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/sentinel/sentinel.conf
+              echo "sentinel announce-port 26379"                 >> /home/sentinel/sentinel.conf
+              echo ""                                             >> /home/sentinel/sentinel.conf
+              echo "sentinel monitor mymaster ${SENTINEL_MASTER_HOST} 6379 2" >> /home/sentinel/sentinel.conf
+              echo "sentinel down-after-milliseconds mymaster 5000"           >> /home/sentinel/sentinel.conf
+              echo "sentinel failover-timeout mymaster 30000"                 >> /home/sentinel/sentinel.conf
+              echo "sentinel parallel-syncs mymaster 1"                       >> /home/sentinel/sentinel.conf
+              echo "[bootstrap] Sentinel monitor target: ${SENTINEL_MASTER_HOST}:6379"
+          volumeMounts:
+            - name: redis-config
+              mountPath: /home/redis
+            - name: sentinel-config
+              mountPath: /home/sentinel
+
+      containers:
+
+        # ── Redis 主程序 ────────────────────────────────────────────────────
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - redis-server
+            - /home/redis/redis.conf
           ports:
             - containerPort: 6379
               protocol: TCP
@@ -129,59 +146,11 @@ spec:
             - sh
             - -c
             - |
-              HOSTNAME=$(hostname)
-              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-headless.front-mpos.svc.cluster.local"
-              REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
-
-              # ── 等待本機 Redis 就緒 ────────────────────────────────────────
               echo "[sentinel-init] 等待本機 Redis (localhost:6379) 就緒..."
               until redis-cli -h localhost -p 6379 --no-auth-warning PING 2>/dev/null | grep -q PONG; do
                 sleep 1
               done
               echo "[sentinel-init] 本機 Redis 就緒"
-              # ──────────────────────────────────────────────────────────────
-
-              # ── 探測實際 master ────────────────────────────────────────────
-              # 依序探測每個 Redis 節點（含本機），回應 ROLE=master 的即為 master。
-              # 若冷啟動其他節點尚未就緒，本機若已是 master 亦可被偵測到。
-              MASTER_HOST=""
-              for i in 0 1 2; do
-                HOST="mps-redis-${i}.${REDIS_HEADLESS}"
-                ROLE=$(redis-cli -h "$HOST" -p 6379 --no-auth-warning ROLE 2>/dev/null | head -1)
-                if [ "$ROLE" = "master" ]; then
-                  MASTER_HOST="$HOST"
-                  echo "[sentinel-init] 透過 ROLE 探測找到 master: ${MASTER_HOST}"
-                  break
-                fi
-              done
-
-              if [ -z "$MASTER_HOST" ]; then
-                MASTER_HOST="mps-redis-0.${REDIS_HEADLESS}"
-                echo "[sentinel-init] ROLE 探測未找到 master，預設改用 node-0（bootstrap）"
-              fi
-              # ──────────────────────────────────────────────────────────────
-
-              cat > /home/sentinel/sentinel.conf << 'EOF'
-              port 26379
-              bind 0.0.0.0
-              protected-mode no
-              dir /home/sentinel/data
-
-              # resolve-hostnames: Sentinel 連線節點時會解析 DNS。
-              # announce-hostnames: Sentinel 回傳給客戶端的是主機名，
-              #   而非原始 IP，確保 Redisson 取得可解析名稱。
-              sentinel resolve-hostnames yes
-              sentinel announce-hostnames yes
-              EOF
-
-              # 追加需由 shell 變數展開的設定行
-              echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/sentinel/sentinel.conf
-              echo "sentinel announce-port 26379"                 >> /home/sentinel/sentinel.conf
-              echo ""                                             >> /home/sentinel/sentinel.conf
-              echo "sentinel monitor mymaster ${MASTER_HOST} 6379 2"    >> /home/sentinel/sentinel.conf
-              echo "sentinel down-after-milliseconds mymaster 5000"     >> /home/sentinel/sentinel.conf
-              echo "sentinel failover-timeout mymaster 30000"           >> /home/sentinel/sentinel.conf
-              echo "sentinel parallel-syncs mymaster 1"                 >> /home/sentinel/sentinel.conf
 
               exec redis-sentinel /home/sentinel/sentinel.conf
           ports:
