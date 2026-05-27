@@ -34,17 +34,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: mps-redis-config
-          env:
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
           command:
             - sh
             - -c
             - |
               HOSTNAME=$(hostname)
               INDEX=${HOSTNAME##*-}
+              POD_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
               REDIS_HEADLESS="${REDIS_HEADLESS_SERVICE}.${POD_NAMESPACE}.svc.${CLUSTER_DOMAIN}"
               ANNOUNCE_HOSTNAME="${HOSTNAME}.${REDIS_HEADLESS}"
               MASTER_HOST=""
