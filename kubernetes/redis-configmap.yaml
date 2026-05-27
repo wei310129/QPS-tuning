@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mps-redis-config
+  namespace: front-mpos
+data:
+  REDIS_HEADLESS_SERVICE: mps-redis-headless
+  CLUSTER_DOMAIN: cluster.local
+
