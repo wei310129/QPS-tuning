@@ -6,8 +6,8 @@
 #   mps-redis-1.mps-redis-headless.front-mpos.svc.cluster.local
 #   mps-redis-2.mps-redis-headless.front-mpos.svc.cluster.local
 #
-# Redis 節點會透過 replica-announce-ip 宣告這些穩定主機名，
-# Sentinel 因此不會記住會變動的 Pod IP。
+# Sidecar 架構下，Redis (6379) 和 Sentinel (26379) 同在一個 Pod，
+# 因此同時開放兩個 port，讓節點間可透過穩定 FQDN 互相通信。
 # ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
@@ -25,29 +25,6 @@ spec:
       protocol: TCP
       port: 6379
       targetPort: 6379
-
-
----
-# ─────────────────────────────────────────────
-# Sentinel StatefulSet 專用 Headless Service
-#
-# 提供每個 Sentinel Pod 穩定的 DNS，供節點彼此發現：
-#   mps-redis-sentinel-0.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
-#   mps-redis-sentinel-1.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
-#   mps-redis-sentinel-2.mps-redis-sentinel-headless.front-mpos.svc.cluster.local
-# ─────────────────────────────────────────────
-apiVersion: v1
-kind: Service
-metadata:
-  name: mps-redis-sentinel-headless
-  namespace: front-mpos
-  labels:
-    app: mps-redis-sentinel
-spec:
-  clusterIP: None
-  selector:
-    app: mps-redis-sentinel
-  ports:
     - name: sentinel
       protocol: TCP
       port: 26379
@@ -59,7 +36,8 @@ spec:
 # 提供應用程式連線 Sentinel 的 ClusterIP Service
 #
 # App (Redisson) 連到此穩定 VIP；Kubernetes 會把流量分配到
-# 3 個 Sentinel Pod。Service 名稱需與 app-configmap.yaml 一致。
+# 3 個 Redis Pod（sidecar 架構下 Sentinel 在同一 Pod）。
+# Service 名稱需與 app-configmap.yaml 一致。
 # ─────────────────────────────────────────────
 apiVersion: v1
 kind: Service
@@ -67,11 +45,11 @@ metadata:
   name: mps-redis-sentinel-service
   namespace: front-mpos
   labels:
-    app: mps-redis-sentinel
+    app: mps-redis
 spec:
   type: ClusterIP
   selector:
-    app: mps-redis-sentinel
+    app: mps-redis
   ports:
     - name: sentinel
       protocol: TCP

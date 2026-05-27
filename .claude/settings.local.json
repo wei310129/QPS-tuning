@@ -14,7 +14,8 @@
       "Read(//mnt/d/my-project/**)",
       "Bash(./mvnw compile *)",
       "Bash(jar tf *)",
-      "Bash(javap *)"
+      "Bash(javap *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\my-project\\\\QPS-tuning\\\\kubernates\" -Recurse -File)"
     ]
   }
 }

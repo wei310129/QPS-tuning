@@ -1,13 +1,18 @@
 # ─────────────────────────────────────────────
 # Redis StatefulSet（3 節點：node-0 為初始 master，node-1/2 為 replica）
+# 每個 Pod 包含 Redis + Sentinel 兩個 container（sidecar 模式）
 #
 # 每個 Pod 會用穩定的 headless DNS 主機名宣告自己，讓
 # Sentinel 不會記錄原始 Pod IP，避免 failover 後重建造成
 # 舊 IP 持續累積的問題。
 #
-# 每次（重）啟時，Pod 會先詢問 Sentinel 目前 master 是誰。
-# 這可避免在 node-0 被刪除並重建時，Sentinel 已提升 node-1
-# 或 node-2 卻發生 split-brain。
+# 每次（重）啟時，Redis container 會先詢問其他 Pod 的 Sentinel
+# 目前 master 是誰（sidecar 架構下 Sentinel 在同一 headless service
+# 的各 Pod 上，port 26379）。這可避免 node-0 被刪除並重建時，
+# Sentinel 已提升 node-1/2 卻發生 split-brain。
+#
+# Sentinel container 啟動前會等待本機 Redis 就緒，
+# 然後探測所有 Redis 節點找出當前 master。
 # ─────────────────────────────────────────────
 apiVersion: apps/v1
 kind: StatefulSet
@@ -28,6 +33,8 @@ spec:
         app: mps-redis
     spec:
       containers:
+
+        # ── Redis 主程序 ────────────────────────────────────────────────────
         - name: redis
           image: redis:7-alpine
           command:
@@ -53,21 +60,24 @@ spec:
               echo "replica-announce-ip  ${ANNOUNCE_HOSTNAME}" >> /home/redis/redis.conf
               echo "replica-announce-port 6379"                 >> /home/redis/redis.conf
 
-              # ── 判斷角色 ─────────────────────────────────────────────────
-              # 輪詢每個 Sentinel，查出目前 master。
-              # 若 Sentinel 尚未可用（首次啟動 bootstrap），
-              # 則退回使用固定 INDEX 規則。
-              SENTINEL_HEADLESS="mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
+              # ── 判斷角色 ────────────────────────────────────────────────────
+              # 詢問其他 Pod 的 Sentinel（sidecar 架構，port 26379）找出目前 master。
+              # 跳過自身：本機 Sentinel 此時尚未啟動。
+              # 若所有 Sentinel 皆不可達（首次 bootstrap），退回固定 INDEX 規則。
+              REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
               MASTER_HOST=""
 
               for i in 0 1 2; do
-                SENTINEL="mps-redis-sentinel-${i}.${SENTINEL_HEADLESS}"
+                # 跳過自身（本機 Sentinel 尚未啟動）
+                if [ "mps-redis-${i}" = "$HOSTNAME" ]; then
+                  continue
+                fi
+                SENTINEL="mps-redis-${i}.${REDIS_HEADLESS}"
                 CANDIDATE=$(redis-cli -h "$SENTINEL" -p 26379 --no-auth-warning \
                   SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -1)
-                # head -1 會回傳主機名那一行；需防呆空值或錯誤輸出
                 if echo "$CANDIDATE" | grep -q "\."; then
                   MASTER_HOST="$CANDIDATE"
-                  echo "[init] Sentinel ${SENTINEL} 回報 master: ${MASTER_HOST}"
+                  echo "[init] Sentinel ${SENTINEL}:26379 回報 master: ${MASTER_HOST}"
                   break
                 fi
               done
@@ -75,7 +85,6 @@ spec:
               if [ -n "$MASTER_HOST" ]; then
                 if [ "$MASTER_HOST" = "$ANNOUNCE_HOSTNAME" ]; then
                   echo "[init] 目前節點就是 Sentinel 選出的 master，無需 replicaof"
-                  # 不需要 replicaof
                 else
                   echo "[init] 以 Sentinel 選出的 master 為上游啟動 replica: ${MASTER_HOST}"
                   echo "replicaof ${MASTER_HOST} 6379" >> /home/redis/redis.conf
@@ -84,7 +93,7 @@ spec:
                 # Sentinel 尚不可達（bootstrap / 冷啟動）
                 if [ "$INDEX" != "0" ]; then
                   echo "[init] Bootstrap 模式（無 sentinel）：以 node-0 為上游啟動 replica"
-                  echo "replicaof mps-redis-0.mps-redis-headless.front-mpos.svc.cluster.local 6379" \
+                  echo "replicaof mps-redis-0.${REDIS_HEADLESS} 6379" \
                     >> /home/redis/redis.conf
                 else
                   echo "[init] Bootstrap 模式（無 sentinel）：INDEX=0，以 master 啟動"
@@ -97,9 +106,9 @@ spec:
             - containerPort: 6379
               protocol: TCP
           volumeMounts:
-            - name: data
+            - name: redis-data
               mountPath: /home/redis/data
-            - name: config
+            - name: redis-config
               mountPath: /home/redis
           resources:
             requests:
@@ -108,43 +117,12 @@ spec:
             limits:
               cpu: "2"
               memory: "256Mi"
-      volumes:
-        - name: data
-          emptyDir: {}
-        - name: config
-          emptyDir: {}
 
-
----
-# ─────────────────────────────────────────────
-# Redis Sentinel StatefulSet（3 個 replica）
-#
-# 每個 Sentinel 會宣告自己的穩定 headless DNS 主機名，
-# 讓 Sentinel 彼此以名稱發現，而非使用 IP。
-#
-# 每次（重）啟時，Sentinel 會探測全部 Redis 節點找出當前 master，
-# 而不是固定寫死 node-0。
-# 這可避免重啟後回到過時 master（emptyDir 設定每次都會重建）。
-# ─────────────────────────────────────────────
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: mps-redis-sentinel
-  namespace: front-mpos
-  labels:
-    app: mps-redis-sentinel
-spec:
-  serviceName: mps-redis-sentinel-headless  # 必須與 headless Service 名稱一致
-  replicas: 3
-  selector:
-    matchLabels:
-      app: mps-redis-sentinel
-  template:
-    metadata:
-      labels:
-        app: mps-redis-sentinel
-    spec:
-      containers:
+        # ── Sentinel Sidecar ────────────────────────────────────────────────
+        # 與 Redis 同一 Pod，共用 Pod IP 和 headless DNS 名稱，
+        # 差別只在 port（26379 vs 6379）。
+        # announce-ip 設為本 Pod 的 FQDN，讓其他 Sentinel 和客戶端
+        # 透過可解析的名稱找到此 Sentinel，而非不穩定的 Pod IP。
         - name: sentinel
           image: redis:7-alpine
           command:
@@ -152,69 +130,82 @@ spec:
             - -c
             - |
               HOSTNAME=$(hostname)
-              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-sentinel-headless.front-mpos.svc.cluster.local"
+              ANNOUNCE_HOSTNAME="${HOSTNAME}.mps-redis-headless.front-mpos.svc.cluster.local"
               REDIS_HEADLESS="mps-redis-headless.front-mpos.svc.cluster.local"
 
-              # ── 探測實際 master ───────────────────────────────────────────
-              # 依序探測每個 Redis 節點，回應 ROLE=master 的節點即為 master。
-              # 若目前無任何 Redis 可達（冷啟動），則退回 node-0。
+              # ── 等待本機 Redis 就緒 ────────────────────────────────────────
+              echo "[sentinel-init] 等待本機 Redis (localhost:6379) 就緒..."
+              until redis-cli -h localhost -p 6379 --no-auth-warning PING 2>/dev/null | grep -q PONG; do
+                sleep 1
+              done
+              echo "[sentinel-init] 本機 Redis 就緒"
+              # ──────────────────────────────────────────────────────────────
+
+              # ── 探測實際 master ────────────────────────────────────────────
+              # 依序探測每個 Redis 節點（含本機），回應 ROLE=master 的即為 master。
+              # 若冷啟動其他節點尚未就緒，本機若已是 master 亦可被偵測到。
               MASTER_HOST=""
               for i in 0 1 2; do
                 HOST="mps-redis-${i}.${REDIS_HEADLESS}"
                 ROLE=$(redis-cli -h "$HOST" -p 6379 --no-auth-warning ROLE 2>/dev/null | head -1)
                 if [ "$ROLE" = "master" ]; then
                   MASTER_HOST="$HOST"
-                  echo "[init] 透過 ROLE 探測找到 master: ${MASTER_HOST}"
+                  echo "[sentinel-init] 透過 ROLE 探測找到 master: ${MASTER_HOST}"
                   break
                 fi
               done
 
               if [ -z "$MASTER_HOST" ]; then
                 MASTER_HOST="mps-redis-0.${REDIS_HEADLESS}"
-                echo "[init] ROLE 探測未找到 master，預設改用 node-0（bootstrap）"
+                echo "[sentinel-init] ROLE 探測未找到 master，預設改用 node-0（bootstrap）"
               fi
-              # ─────────────────────────────────────────────────────────────
+              # ──────────────────────────────────────────────────────────────
 
-              cat > /home/redis/sentinel.conf << 'EOF'
+              cat > /home/sentinel/sentinel.conf << 'EOF'
               port 26379
               bind 0.0.0.0
               protected-mode no
-              dir /home/redis/data
+              dir /home/sentinel/data
 
               # resolve-hostnames: Sentinel 連線節點時會解析 DNS。
-              # announce-hostnames: Sentinel 回傳給客戶端的是 master/replica 主機名，
+              # announce-hostnames: Sentinel 回傳給客戶端的是主機名，
               #   而非原始 IP，確保 Redisson 取得可解析名稱。
               sentinel resolve-hostnames yes
               sentinel announce-hostnames yes
               EOF
 
               # 追加需由 shell 變數展開的設定行
-              echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/redis/sentinel.conf
-              echo "sentinel announce-port 26379"                 >> /home/redis/sentinel.conf
-              echo ""                                             >> /home/redis/sentinel.conf
-              echo "sentinel monitor mymaster ${MASTER_HOST} 6379 2"    >> /home/redis/sentinel.conf
-              echo "sentinel down-after-milliseconds mymaster 5000"     >> /home/redis/sentinel.conf
-              echo "sentinel failover-timeout mymaster 30000"           >> /home/redis/sentinel.conf
-              echo "sentinel parallel-syncs mymaster 1"                 >> /home/redis/sentinel.conf
+              echo "sentinel announce-ip   ${ANNOUNCE_HOSTNAME}" >> /home/sentinel/sentinel.conf
+              echo "sentinel announce-port 26379"                 >> /home/sentinel/sentinel.conf
+              echo ""                                             >> /home/sentinel/sentinel.conf
+              echo "sentinel monitor mymaster ${MASTER_HOST} 6379 2"    >> /home/sentinel/sentinel.conf
+              echo "sentinel down-after-milliseconds mymaster 5000"     >> /home/sentinel/sentinel.conf
+              echo "sentinel failover-timeout mymaster 30000"           >> /home/sentinel/sentinel.conf
+              echo "sentinel parallel-syncs mymaster 1"                 >> /home/sentinel/sentinel.conf
 
-              exec redis-sentinel /home/redis/sentinel.conf
+              exec redis-sentinel /home/sentinel/sentinel.conf
           ports:
             - containerPort: 26379
               protocol: TCP
           volumeMounts:
-            - name: data
-              mountPath: /home/redis/data
-            - name: config
-              mountPath: /home/redis
+            - name: sentinel-data
+              mountPath: /home/sentinel/data
+            - name: sentinel-config
+              mountPath: /home/sentinel
           resources:
             requests:
               cpu: "0.1"
               memory: "128Mi"
             limits:
               cpu: "1"
-              memory: "1Gi"
+              memory: "256Mi"
+
       volumes:
-        - name: data
+        - name: redis-data
           emptyDir: {}
-        - name: config
+        - name: redis-config
+          emptyDir: {}
+        - name: sentinel-data
+          emptyDir: {}
+        - name: sentinel-config
           emptyDir: {}
