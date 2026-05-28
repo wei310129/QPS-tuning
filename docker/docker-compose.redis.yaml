@@ -25,6 +25,24 @@ services:
     networks:
       - qps-net
 
+  grafana:
+    image: grafana/grafana:latest
+    container_name: qps-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - qps-net
+
 networks:
   qps-net:
     driver: bridge
+
+volumes:
+  grafana-data:
