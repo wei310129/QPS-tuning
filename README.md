@@ -1,23 +1,27 @@
 # QPS-tuning
 
-一個用於觀察與調校後端效能行為的實驗平台，實作目標涵蓋：
+一個用於觀察與調校後端效能行為的實驗平台。
 
-- **分散式限流與並發控制**：以 Redis 為後端，驗證多實例部署下 Rate Limit 與 Semaphore 的跨實例一致性
-- **JVM GC 壓力模擬**：分別製造短命小物件、中等存活物件（快取場景）、大物件（humongous allocation），觀察不同 GC 策略的表現
-- **Redis 效能基準**：涵蓋單筆 RTT、循序讀寫吞吐量、Pipeline Batch 效率、並發混合讀寫，提供可重複執行的量測資料
-- **Redis OOM + Sentinel Failover**：在 `noeviction` 策略下觸發 OOM，並以 Lua 忙等佔用 event loop，驗證 Sentinel 的 failover 偵測與切換流程
-- **即時效能監控**：透過 Micrometer + Prometheus + Grafana，觀察 HTTP 延遲分佈、錯誤率與 JVM 指標
+| 實作目標 | 說明 |
+|----------|------|
+| 分散式限流與並發控制 | 以 Redis 為後端，驗證多實例部署下 Rate Limit 與 Semaphore 的跨實例一致性 |
+| JVM GC 壓力模擬 | 分別製造短命小物件、中等存活物件（快取場景）、大物件（humongous allocation），觀察不同 GC 策略的表現 |
+| Redis 效能基準 | 涵蓋單筆 RTT、循序讀寫吞吐量、Pipeline Batch 效率、並發混合讀寫，提供可重複執行的量測資料 |
+| Redis OOM + Sentinel Failover | 在 `noeviction` 策略下觸發 OOM，並以 Lua 忙等佔用 event loop，驗證 Sentinel 的 failover 偵測與切換流程 |
+| 即時效能監控 | 透過 Micrometer + Prometheus + Grafana，觀察 HTTP 延遲分佈、錯誤率與 JVM 指標 |
 
 ---
 
 ## 技術棧
 
-- **Java 21 / Spring Boot 3.3.3**，Servlet 容器替換為 Undertow
-- **Redisson 4.1.0**：RRateLimiter、RSemaphore、RBatch、Lua Script
-- **Micrometer + Prometheus**：HTTP latency histogram 及 JVM 指標，透過 `/actuator/prometheus` 暴露
-- **Grafana**：連接 Prometheus 進行視覺化
-- **Docker Compose**：本地一鍵啟動 Redis + Prometheus + Grafana
-- **Kubernetes**：正式部署環境，Redis 使用 StatefulSet + Sentinel Sidecar（3 節點），監控堆疊部署於同一 namespace
+| 技術 | 說明 |
+|------|------|
+| Java 21 / Spring Boot 3.3.3 | Servlet 容器替換為 Undertow |
+| Redisson 4.1.0 | RRateLimiter、RSemaphore、RBatch、Lua Script |
+| Micrometer + Prometheus | HTTP latency histogram 及 JVM 指標，透過 `/actuator/prometheus` 暴露 |
+| Grafana | 連接 Prometheus 進行視覺化 |
+| Docker Compose | 本地一鍵啟動 Redis + Prometheus + Grafana |
+| Kubernetes | 正式部署環境，Redis 使用 StatefulSet + Sentinel Sidecar（3 節點），監控堆疊部署於同一 namespace |
 
 ---
 
