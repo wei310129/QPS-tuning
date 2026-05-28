@@ -8,3 +8,6 @@ resources:
   - app-configmap.yaml
   - app-deployment.yaml
   - app-service.yaml
+  - monitoring-prometheus-configmap.yaml
+  - monitoring-prometheus-deployment.yaml
+  - monitoring-grafana-deployment.yaml
