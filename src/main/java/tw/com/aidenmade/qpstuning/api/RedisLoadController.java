@@ -1,5 +1,7 @@
 package tw.com.aidenmade.qpstuning.api;
 
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.*;
@@ -17,21 +19,38 @@ import java.util.concurrent.atomic.AtomicLong;
 public class RedisLoadController {
 
     private final RedissonClient redisson;
+    private final ObservationRegistry observationRegistry;
     private static final String KEY_PREFIX = "bench:";
 
     /**
      * A. 單筆 SET/GET RTT — 確認連線健康與基本延遲
+     *
+     * 每個 Redis 命令包在獨立 span 內，Grafana Tempo 可看到
+     * HTTP span → redis.set span / redis.get span 的時間分布。
      */
     @GetMapping("/ping")
     public Map<String, Object> ping() {
         String key = KEY_PREFIX + "ping";
 
         long t0 = System.nanoTime();
-        redisson.<String>getBucket(key).set("pong");
+        Observation setObs = Observation.start("redis.set", observationRegistry)
+                .lowCardinalityKeyValue("command", "SET");
+        try (Observation.Scope ignored = setObs.openScope()) {
+            redisson.<String>getBucket(key).set("pong");
+        } finally {
+            setObs.stop();
+        }
         double writeMs = (System.nanoTime() - t0) / 1_000_000.0;
 
         long t1 = System.nanoTime();
-        Object val = redisson.getBucket(key).get();
+        Object val;
+        Observation getObs = Observation.start("redis.get", observationRegistry)
+                .lowCardinalityKeyValue("command", "GET");
+        try (Observation.Scope ignored = getObs.openScope()) {
+            val = redisson.getBucket(key).get();
+        } finally {
+            getObs.stop();
+        }
         double readMs = (System.nanoTime() - t1) / 1_000_000.0;
 
         redisson.getBucket(key).delete();

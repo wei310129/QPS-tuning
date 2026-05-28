@@ -8,3 +8,5 @@ data:
   REDIS_MASTER_NAME: mymaster
   REDIS_SENTINEL_ADDRESSES: redis://mps-redis-ha-sentinel-service.front-mpos.svc.cluster.local:26379
   JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+UseG1GC -XX:MaxDirectMemorySize=256m
+  OTLP_ENDPOINT: http://tempo-service.front-mpos.svc.cluster.local:4318/v1/traces
+  TRACING_SAMPLING_PROBABILITY: "0.1"

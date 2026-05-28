@@ -10,4 +10,7 @@ resources:
   - app-service.yaml
   - monitoring-prometheus-configmap.yaml
   - monitoring-prometheus-deployment.yaml
+  - monitoring-grafana-datasources-configmap.yaml
   - monitoring-grafana-deployment.yaml
+  - monitoring-tempo-configmap.yaml
+  - monitoring-tempo-deployment.yaml

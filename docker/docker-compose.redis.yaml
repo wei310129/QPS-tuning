@@ -25,6 +25,19 @@ services:
     networks:
       - qps-net
 
+  tempo:
+    image: grafana/tempo:latest
+    container_name: qps-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "3200:3200"   # Tempo HTTP API (Grafana 查 trace 用)
+      - "4317:4317"   # OTLP gRPC (app → Tempo)
+      - "4318:4318"   # OTLP HTTP (app → Tempo)
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml
+    networks:
+      - qps-net
+
   grafana:
     image: grafana/grafana:latest
     container_name: qps-grafana
@@ -35,8 +48,10 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
     depends_on:
       - prometheus
+      - tempo
     networks:
       - qps-net
 

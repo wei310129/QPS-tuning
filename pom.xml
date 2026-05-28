@@ -112,6 +112,17 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!-- Distributed tracing: Micrometer → OpenTelemetry bridge -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <!-- OTLP exporter: sends spans to Tempo via HTTP -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
         <!-- tests：先用最標準的 starter-test 就好 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
