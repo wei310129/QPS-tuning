@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Redis runtime data ###
+docker/redis-data/
