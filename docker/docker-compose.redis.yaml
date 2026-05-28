@@ -13,6 +13,18 @@ services:
     networks:
       - qps-net
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: qps-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - qps-net
+
 networks:
   qps-net:
     driver: bridge

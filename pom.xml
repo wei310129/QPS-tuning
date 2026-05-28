@@ -106,6 +106,12 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Prometheus metrics -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <!-- tests：先用最標準的 starter-test 就好 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
