@@ -6,9 +6,9 @@ metadata:
 data:
   REDIS_CLUSTER_NAME: mps-redis-cluster
   REDIS_HEADLESS_SERVICE: mps-redis-cluster-headless
-  REDIS_NODE_COUNT: "3"
+  REDIS_NODE_COUNT: "6"
   REDIS_PORT: "6379"
   REDIS_CLUSTER_BUS_PORT: "16379"
-  REDIS_CLUSTER_REPLICAS: "0"
+  REDIS_CLUSTER_REPLICAS: "1"
   CLUSTER_DOMAIN: cluster.local
 
