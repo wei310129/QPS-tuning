@@ -26,6 +26,17 @@ spec:
           envFrom:
             - configMapRef:
                 name: qps-tuning-config
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
+            - name: REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness

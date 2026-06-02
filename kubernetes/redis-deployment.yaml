@@ -35,6 +35,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: mps-redis-ha-config
+            - secretRef:
+                name: redis-secret
           command:
             - sh
             - -c
@@ -58,7 +60,7 @@ spec:
                   continue
                 fi
                 SENTINEL_POD_FQDN="${REDIS_POD_BASENAME}-${i}.${REDIS_HEADLESS_SERVICE_FQDN}"
-                DISCOVERED_MASTER_POD_FQDN=$(redis-cli -h "$SENTINEL_POD_FQDN" -p "$SENTINEL_PORT" --no-auth-warning \
+                DISCOVERED_MASTER_POD_FQDN=$(redis-cli -h "$SENTINEL_POD_FQDN" -p "$SENTINEL_PORT" --no-auth-warning -a "$REDIS_PASSWORD" \
                   SENTINEL get-master-addr-by-name "$REDIS_MASTER_NAME" 2>/dev/null | head -1)
                 if [ -n "$DISCOVERED_MASTER_POD_FQDN" ]; then
                   echo "[bootstrap] Sentinel ${SENTINEL_POD_FQDN}:${SENTINEL_PORT} 回報 master: ${DISCOVERED_MASTER_POD_FQDN}"
@@ -87,6 +89,8 @@ spec:
               dir /home/redis/data
               appendonly yes
               protected-mode no
+              requirepass ${REDIS_PASSWORD}
+              masterauth ${REDIS_PASSWORD}
               maxmemory 64mb
               maxmemory-policy noeviction
               replica-announce-ip ${REDIS_POD_FQDN}
@@ -109,7 +113,9 @@ spec:
               sentinel announce-hostnames yes
               sentinel announce-ip ${REDIS_POD_FQDN}
               sentinel announce-port ${SENTINEL_PORT}
+              requirepass ${REDIS_PASSWORD}
               sentinel monitor ${REDIS_MASTER_NAME} ${EFFECTIVE_MASTER_POD_FQDN} ${REDIS_PORT} 2
+              sentinel auth-pass ${REDIS_MASTER_NAME} ${REDIS_PASSWORD}
               sentinel down-after-milliseconds ${REDIS_MASTER_NAME} 5000
               sentinel failover-timeout ${REDIS_MASTER_NAME} 30000
               sentinel parallel-syncs ${REDIS_MASTER_NAME} 1
@@ -156,12 +162,14 @@ spec:
           envFrom:
             - configMapRef:
                 name: mps-redis-ha-config
+            - secretRef:
+                name: redis-secret
           command:
             - sh
             - -c
             - |
               echo "[sentinel-init] 等待本機 Redis (localhost:${REDIS_PORT}) 就緒..."
-              until redis-cli -h localhost -p "$REDIS_PORT" --no-auth-warning PING 2>/dev/null | grep -q PONG; do
+              until redis-cli -h localhost -p "$REDIS_PORT" --no-auth-warning -a "$REDIS_PASSWORD" PING 2>/dev/null | grep -q PONG; do
                 sleep 1
               done
               echo "[sentinel-init] 本機 Redis 就緒"
