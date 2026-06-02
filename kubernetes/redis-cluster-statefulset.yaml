@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mps-redis-cluster
+  namespace: front-mpos
+  labels:
+    app: mps-redis-cluster
+spec:
+  serviceName: mps-redis-cluster-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mps-redis-cluster
+  template:
+    metadata:
+      labels:
+        app: mps-redis-cluster
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          envFrom:
+            - configMapRef:
+                name: mps-redis-cluster-config
+            - secretRef:
+                name: redis-secret
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          command:
+            - sh
+            - -c
+            - |
+              cat > /data/redis.conf <<EOF
+              bind 0.0.0.0
+              protected-mode no
+              port ${REDIS_PORT}
+              requirepass ${REDIS_PASSWORD}
+              masterauth ${REDIS_PASSWORD}
+              appendonly yes
+              dir /data
+              cluster-enabled yes
+              cluster-config-file nodes.conf
+              cluster-node-timeout 5000
+              cluster-announce-ip ${POD_IP}
+              cluster-announce-port ${REDIS_PORT}
+              cluster-announce-bus-port ${REDIS_CLUSTER_BUS_PORT}
+              EOF
+
+              exec redis-server /data/redis.conf
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+            - name: cluster-bus
+              containerPort: 16379
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -h 127.0.0.1 -p ${REDIS_PORT} --no-auth-warning -a ${REDIS_PASSWORD} PING | grep -q PONG
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "12Gi"
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+

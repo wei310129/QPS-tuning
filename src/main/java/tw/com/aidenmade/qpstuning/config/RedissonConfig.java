@@ -2,6 +2,7 @@ package tw.com.aidenmade.qpstuning.config;
 
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
+import org.redisson.config.ClusterServersConfig;
 import org.redisson.config.Config;
 import org.redisson.config.SingleServerConfig;
 import org.redisson.config.SentinelServersConfig;
@@ -18,6 +19,7 @@ public class RedissonConfig {
     public RedissonClient redissonClient(
             @Value("${app.redis.mode:single}") String mode,
             @Value("${app.redis.address:redis://127.0.0.1:6379}") String address,
+            @Value("${app.redis.cluster.addresses:redis://127.0.0.1:6379}") String clusterAddresses,
             @Value("${app.redis.sentinel.master-name:mymaster}") String masterName,
             @Value("${app.redis.sentinel.addresses:redis://127.0.0.1:26379}") String sentinelAddresses,
             @Value("${app.redis.password:}") String password,
@@ -25,7 +27,19 @@ public class RedissonConfig {
     ) {
         Config config = new Config();
 
-        if ("sentinel".equalsIgnoreCase(mode)) {
+        if ("cluster".equalsIgnoreCase(mode)) {
+            String[] addresses = Arrays.stream(clusterAddresses.split(","))
+                    .map(String::trim)
+                    .filter(value -> !value.isBlank())
+                    .toArray(String[]::new);
+
+            ClusterServersConfig clusterConfig = config.useClusterServers()
+                    .addNodeAddress(addresses);
+
+            if (!password.isBlank()) {
+                clusterConfig.setPassword(password);
+            }
+        } else if ("sentinel".equalsIgnoreCase(mode)) {
             String[] addresses = Arrays.stream(sentinelAddresses.split(","))
                     .map(String::trim)
                     .filter(value -> !value.isBlank())

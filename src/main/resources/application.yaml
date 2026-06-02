@@ -14,6 +14,8 @@ app:
       master-name: ${REDIS_MASTER_NAME:mymaster}
       addresses: ${REDIS_SENTINEL_ADDRESSES:${REDIS_SENTINEL_ADDRESS:redis://127.0.0.1:26379}}
       password: ${REDIS_SENTINEL_PASSWORD:}
+    cluster:
+      addresses: ${REDIS_CLUSTER_ADDRESSES:redis://127.0.0.1:6379}
 
 management:
   endpoints:

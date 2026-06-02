@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mps-redis-cluster-config
+  namespace: front-mpos
+data:
+  REDIS_CLUSTER_NAME: mps-redis-cluster
+  REDIS_HEADLESS_SERVICE: mps-redis-cluster-headless
+  REDIS_NODE_COUNT: "3"
+  REDIS_PORT: "6379"
+  REDIS_CLUSTER_BUS_PORT: "16379"
+  REDIS_CLUSTER_REPLICAS: "0"
+  CLUSTER_DOMAIN: cluster.local
+

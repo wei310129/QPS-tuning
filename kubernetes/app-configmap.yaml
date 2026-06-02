@@ -4,9 +4,8 @@ metadata:
   name: qps-tuning-config
   namespace: front-mpos
 data:
-  REDIS_MODE: sentinel
-  REDIS_MASTER_NAME: mymaster
-  REDIS_SENTINEL_ADDRESSES: redis://mps-redis-ha-sentinel-service.front-mpos.svc.cluster.local:26379
+  REDIS_MODE: cluster
+  REDIS_CLUSTER_ADDRESSES: redis://mps-redis-cluster-0.mps-redis-cluster-headless.front-mpos.svc.cluster.local:6379,redis://mps-redis-cluster-1.mps-redis-cluster-headless.front-mpos.svc.cluster.local:6379,redis://mps-redis-cluster-2.mps-redis-cluster-headless.front-mpos.svc.cluster.local:6379
   JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+UseG1GC -XX:MaxDirectMemorySize=256m
   OTLP_ENDPOINT: http://tempo-service.front-mpos.svc.cluster.local:4318/v1/traces
   TRACING_SAMPLING_PROBABILITY: "0.1"

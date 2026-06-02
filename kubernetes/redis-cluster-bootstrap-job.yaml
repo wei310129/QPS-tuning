@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mps-redis-cluster-bootstrap
+  namespace: front-mpos
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: redis:7-alpine
+          envFrom:
+            - configMapRef:
+                name: mps-redis-cluster-config
+            - secretRef:
+                name: redis-secret
+          command:
+            - sh
+            - -c
+            - |
+              NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+              HEADLESS_FQDN="${REDIS_HEADLESS_SERVICE}.${NAMESPACE}.svc.${CLUSTER_DOMAIN}"
+              NODES=""
+
+              i=0
+              while [ "$i" -lt "$REDIS_NODE_COUNT" ]; do
+                NODE_HOST="${REDIS_CLUSTER_NAME}-${i}.${HEADLESS_FQDN}"
+                echo "[cluster-bootstrap] waiting for ${NODE_HOST}:${REDIS_PORT}"
+                until redis-cli -h "$NODE_HOST" -p "$REDIS_PORT" --no-auth-warning -a "$REDIS_PASSWORD" PING 2>/dev/null | grep -q PONG; do
+                  sleep 1
+                done
+                NODES="$NODES ${NODE_HOST}:${REDIS_PORT}"
+                i=$((i + 1))
+              done
+
+              FIRST_NODE="${REDIS_CLUSTER_NAME}-0.${HEADLESS_FQDN}"
+              if redis-cli -h "$FIRST_NODE" -p "$REDIS_PORT" --no-auth-warning -a "$REDIS_PASSWORD" CLUSTER INFO 2>/dev/null | grep -q "cluster_state:ok"; then
+                echo "[cluster-bootstrap] cluster already initialized"
+                exit 0
+              fi
+
+              echo "[cluster-bootstrap] create cluster with nodes:$NODES"
+              redis-cli --cluster create $NODES --cluster-replicas "$REDIS_CLUSTER_REPLICAS" -a "$REDIS_PASSWORD" --cluster-yes
+
+              redis-cli -h "$FIRST_NODE" -p "$REDIS_PORT" --no-auth-warning -a "$REDIS_PASSWORD" CLUSTER INFO
+
