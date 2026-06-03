@@ -5,7 +5,7 @@ resources:
   - redis-sentinel-configmap.yaml
   - redis-sentinel-statefulset.yaml
   - redis-sentinel-service.yaml
-  - redis-sentinel-secret.yaml
+  - redis-secret.yaml
   - app-configmap.yaml
   - app-deployment.yaml
   - app-service.yaml
