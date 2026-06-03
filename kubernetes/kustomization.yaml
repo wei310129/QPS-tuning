@@ -6,8 +6,8 @@ resources:
   - redis-cluster-statefulset.yaml
   - redis-cluster-service.yaml
   - redis-cluster-bootstrap-job.yaml
-  - app-configmap.yaml
   - redis-secret.yaml
+  - app-configmap.yaml
   - app-deployment.yaml
   - app-service.yaml
   - monitoring-prometheus-configmap.yaml
