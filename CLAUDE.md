@@ -30,6 +30,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `/redis/mixed` GET: Concurrent mixed read/write with configurable threads and read ratio (Case E)
   - `/redis/oom-and-failover` GET: Fill Redis to OOM then block event loop via Lua busy-loop to trigger Sentinel failover (Case F)
   - `/redis/oom-cleanup` DELETE: Delete bench:oom:* keys after failover completes (Case G)
+- `HeapDumpController` (`/heap/*`): JVM heap analysis scenarios for Eclipse MAT:
+  - `/heap/string-dup` GET: Flood heap with duplicate String objects without intern (Case H) — MAT "Duplicate Strings" report
+  - `/heap/string-intern` GET: String.intern() pool reference test, single instance for N refs (Case I) — contrast with H in MAT Histogram
+  - `/heap/dominator` GET: Build exclusive retention tree; root shallow tiny, retained huge (Case J) — MAT Dominator Tree view
+  - `/heap/shallow-retained` GET: Exclusive vs shared byte[] wrappers to contrast shallow/retained sizes (Case K) — MAT Histogram retained column
+  - `/heap/dump` POST: Trigger HotSpot heap dump to .hprof via HotSpotDiagnosticMXBean
+  - `/heap/reset` DELETE: Clear all static state and allow GC to reclaim
 
 **Config**:
 - `RedissonConfig`: Builds `RedissonClient` based on `REDIS_MODE` env var — `single` (default) uses `useSingleServer`, `sentinel` uses `useSentinelServers` with comma-separated `REDIS_SENTINEL_ADDRESSES`.
@@ -163,7 +170,8 @@ src/main/java/tw/com/aidenmade/qpstuning/
 │   ├── OrderController.java                # /order, 500ms delay, atomic counter
 │   ├── TuningController.java               # /api/v1/tuning/try-get, 1s sleep
 │   ├── GcLoadController.java               # /gc/alloc, /gc/cache, /gc/big
-│   └── RedisLoadController.java            # /redis/* benchmark suite (Cases A–G)
+│   ├── RedisLoadController.java            # /redis/* benchmark suite (Cases A–G)
+│   └── HeapDumpController.java             # /heap/* MAT analysis scenarios (Cases H–K)
 ├── config/
 │   └── RedissonConfig.java                 # Single / Sentinel mode switching
 └── filter/

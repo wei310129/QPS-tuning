@@ -34,3 +34,6 @@ build/
 
 ### Redis runtime data ###
 docker/redis-data/
+
+### heap dumps ###
+/heapdump
